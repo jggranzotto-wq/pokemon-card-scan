@@ -21,7 +21,7 @@ export function exampleSolds(name: string, setName?: string, number?: string): S
     const { grade, isGraded } = detectGrade(title);
     const soldAt = new Date(Date.now() - row.days * 24 * 60 * 60 * 1000).toISOString();
     return {
-      id: `example-${index}`,
+      id: `example-${label.replace(/\s+/g, "-").toLowerCase()}-${index}`,
       title,
       priceUsd: row.price,
       soldAt,

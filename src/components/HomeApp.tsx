@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compressImage, preloadOcr, readCardText, SAMPLE_CARD } from "@/lib/client-image";
 import { formatCad, formatUsd } from "@/lib/money";
+import { createScanGuard } from "@/lib/scan-guard";
+import { soldsRequestBody } from "@/lib/solds-request";
 import type {
   ExtractedCard,
   IdentifyResponse,
@@ -27,6 +29,7 @@ function bandLabel(band: { min: number; max: number; median: number; typicalLow:
 export function HomeApp() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
+  const scansRef = useRef(createScanGuard());
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -61,53 +64,74 @@ export function HomeApp() {
     return `${id} · ${sold}`;
   }, [status]);
 
-  async function identifyBlob(blob: Blob, previewUrl: string) {
+  function beginScan() {
+    const scan = scansRef.current.begin();
     setError(null);
     setSolds(null);
     setSelected(null);
     setCandidates([]);
+    setExtracted({});
     setPhase("working");
-    setProgress("Sending photo…");
-    setPreview(previewUrl);
-
-    const form = new FormData();
-    form.append("image", blob, "card.jpg");
-    const res = await fetch("/api/identify", { method: "POST", body: form });
-    const data = (await res.json()) as IdentifyResponse & { error?: string };
-    if (!res.ok && data.message !== "ocr-required") {
-      throw new Error(data.error || data.message || "Could not identify that card.");
-    }
-
-    if (data.message === "ocr-required" || (!data.candidates?.length && !data.extracted?.name)) {
-      const text = await readCardText(blob, setProgress);
-      setProgress("Matching the card…");
-      const ocrRes = await fetch("/api/identify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      const ocrData = (await ocrRes.json()) as IdentifyResponse & { error?: string };
-      if (!ocrRes.ok) throw new Error(ocrData.error || "OCR match failed.");
-      await applyIdentify(ocrData);
-      return;
-    }
-
-    await applyIdentify(data);
+    return scan;
   }
 
-  async function applyIdentify(data: IdentifyResponse) {
-    setExtracted(data.extracted ?? {});
+  async function identifyBlob(blob: Blob, previewUrl: string) {
+    const scan = beginScan();
+    try {
+      setProgress("Sending photo…");
+      setPreview(previewUrl);
+
+      const form = new FormData();
+      form.append("image", blob, "card.jpg");
+      const res = await fetch("/api/identify", { method: "POST", body: form, cache: "no-store" });
+      const data = (await res.json()) as IdentifyResponse & { error?: string };
+      if (!scansRef.current.isCurrent(scan)) return;
+      if (!res.ok && data.message !== "ocr-required") {
+        throw new Error(data.error || data.message || "Could not identify that card.");
+      }
+
+      if (data.message === "ocr-required" || (!data.candidates?.length && !data.extracted?.name)) {
+        const text = await readCardText(blob, (status) => {
+          if (scansRef.current.isCurrent(scan)) setProgress(status);
+        });
+        if (!scansRef.current.isCurrent(scan)) return;
+        setProgress("Matching the card…");
+        const ocrRes = await fetch("/api/identify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ text }),
+        });
+        const ocrData = (await ocrRes.json()) as IdentifyResponse & { error?: string };
+        if (!scansRef.current.isCurrent(scan)) return;
+        if (!ocrRes.ok) throw new Error(ocrData.error || "OCR match failed.");
+        await applyIdentify(ocrData, scan);
+        return;
+      }
+
+      await applyIdentify(data, scan);
+    } catch (err) {
+      if (!scansRef.current.isCurrent(scan)) return;
+      throw err;
+    }
+  }
+
+  async function applyIdentify(data: IdentifyResponse, scan: number) {
+    if (!scansRef.current.isCurrent(scan)) return;
+    const extract = data.extracted ?? {};
+    setExtracted(extract);
     setCandidates(data.candidates ?? []);
     const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
     if (auto) {
       setSelected(auto);
-      await loadSolds(auto, data.extracted);
+      await loadSolds(auto, extract, undefined, scan);
       return;
     }
+    if (!scansRef.current.isCurrent(scan)) return;
     setPhase("candidates");
     setProgress("");
-    if (!data.candidates?.length && data.extracted?.name) {
-      await loadSolds(null, data.extracted);
+    if (!data.candidates?.length && extract.name) {
+      await loadSolds(null, extract, undefined, scan);
       return;
     }
     if (!data.candidates?.length) {
@@ -115,23 +139,23 @@ export function HomeApp() {
     }
   }
 
-  async function loadSolds(card: PokemonCard | null, extract = extracted, nameOverride?: string) {
+  async function loadSolds(
+    card: PokemonCard | null,
+    extract: ExtractedCard,
+    nameOverride: string | undefined,
+    scan: number,
+  ) {
+    if (!scansRef.current.isCurrent(scan)) return;
     setPhase("working");
     setProgress("Fetching sold prices…");
     const res = await fetch("/api/solds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        cardId: card?.id,
-        name: nameOverride || card?.name || extract.name,
-        setName: card?.setName || extract.set,
-        number: card?.number || extract.collectorNumber,
-        variant: extract.variant,
-        language: extract.language || card?.language,
-        preferRaw: !extract.isSlab,
-      }),
+      cache: "no-store",
+      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride)),
     });
     const data = (await res.json()) as SoldsResponse & { error?: string };
+    if (!scansRef.current.isCurrent(scan)) return;
     if (!res.ok) throw new Error(data.error || "Could not load solds.");
     setSolds(data);
     setPhase("solds");
@@ -152,20 +176,22 @@ export function HomeApp() {
   }
 
   async function onSample() {
+    const scan = beginScan();
     try {
-      setError(null);
       setPreview(SAMPLE_CARD.image);
-      setPhase("working");
       setProgress("Matching sample card…");
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({ text: SAMPLE_CARD.text }),
       });
       const data = (await res.json()) as IdentifyResponse & { error?: string };
+      if (!scansRef.current.isCurrent(scan)) return;
       if (!res.ok) throw new Error(data.error || "Sample identify failed.");
-      await applyIdentify(data);
+      await applyIdentify(data, scan);
     } catch (err) {
+      if (!scansRef.current.isCurrent(scan)) return;
       setPhase("idle");
       setProgress("");
       setError(err instanceof Error ? err.message : "Sample failed.");
@@ -175,19 +201,21 @@ export function HomeApp() {
   async function onManualSearch(event: React.FormEvent) {
     event.preventDefault();
     if (!search.trim()) return;
+    const scan = beginScan();
     try {
-      setError(null);
-      setPhase("working");
       setProgress("Searching cards…");
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({ extracted: { name: search.trim() } }),
       });
       const data = (await res.json()) as IdentifyResponse & { error?: string };
+      if (!scansRef.current.isCurrent(scan)) return;
       if (!res.ok) throw new Error(data.error || "Search failed.");
-      await applyIdentify(data);
+      await applyIdentify(data, scan);
     } catch (err) {
+      if (!scansRef.current.isCurrent(scan)) return;
       setPhase("candidates");
       setProgress("");
       setError(err instanceof Error ? err.message : "Search failed.");
@@ -313,8 +341,11 @@ export function HomeApp() {
                   <button
                     type="button"
                     onClick={() => {
+                      const scan = scansRef.current.begin();
+                      setSolds(null);
                       setSelected(card);
-                      void loadSolds(card).catch((err) => {
+                      void loadSolds(card, extracted, undefined, scan).catch((err) => {
+                        if (!scansRef.current.isCurrent(scan)) return;
                         setError(err instanceof Error ? err.message : "Solds failed.");
                         setPhase("candidates");
                       });
@@ -364,7 +395,7 @@ export function HomeApp() {
       ) : null}
 
       {solds ? (
-        <section className="mt-4 safe-bottom">
+        <section key={solds.query} className="mt-4 safe-bottom">
           <div
             className={`rounded-2xl px-4 py-3 text-sm ${
               solds.demo ? "bg-bolt/15 text-bolt" : "bg-mint/15 text-mint"
