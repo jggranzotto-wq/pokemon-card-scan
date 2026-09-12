@@ -41,8 +41,10 @@ export type PokemonCard = {
   variantHints: string[];
   tcgplayer?: {
     url?: string;
+    printing?: string;
     marketUsd?: number;
     lowUsd?: number;
+    midUsd?: number;
     highUsd?: number;
     updatedAt?: string;
   };
@@ -79,9 +81,13 @@ export type PriceBand = {
   typicalHigh: number;
 };
 
+export type EbaySoldsStatus = "ok" | "none" | "invalid" | "error" | "skipped";
+
 export type SoldsResponse = {
-  source: "ebay" | "example";
+  source: "ebay" | "tcgplayer" | "none";
   sourceLabel: string;
+  sourceUrl?: string;
+  priceChartingUrl: string;
   demo: boolean;
   usdCadRate: number;
   rateLabel: string;
@@ -92,6 +98,9 @@ export type SoldsResponse = {
   graded: PriceBand | null;
   typical: PriceBand | null;
   tcgplayer?: PokemonCard["tcgplayer"];
+  message?: string;
+  ebayStatus: EbaySoldsStatus;
+  ebayError?: string;
 };
 
 export type StatusResponse = {

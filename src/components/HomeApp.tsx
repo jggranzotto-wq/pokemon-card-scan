@@ -11,8 +11,8 @@ import {
   shouldShowEbaySetupOnLaunch,
   writeEbayAppId,
 } from "@/lib/ebay-app-id";
-import { formatCad, formatUsd } from "@/lib/money";
 import { CardIdentityPanel } from "@/components/CardIdentity";
+import { CompsPanel } from "@/components/CompsPanel";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
@@ -26,17 +26,6 @@ import type {
 } from "@/types/card";
 
 type Phase = "idle" | "working" | "candidates" | "solds";
-
-function formatSoldDate(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(date);
-}
-
-function bandLabel(band: { min: number; max: number; median: number; typicalLow: number; typicalHigh: number } | null, rate: number) {
-  if (!band) return "No sales in this group.";
-  return `${formatUsd(band.typicalLow)}–${formatUsd(band.typicalHigh)} typical · median ${formatUsd(band.median)} (${formatCad(band.median, rate)})`;
-}
 
 export function HomeApp() {
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -89,7 +78,9 @@ export function HomeApp() {
 
   const modeNote = useMemo(() => {
     const id = status?.vision ? "Vision ID on" : "OCR reads the card photo (not the filename)";
-    return appId ? `${id} · eBay solds use your App ID` : `${id} · Identify only until you add an App ID`;
+    return appId
+      ? `${id} · Public comps plus eBay solds from your App ID`
+      : `${id} · Public comps after ID. No eBay login.`;
   }, [status, appId]);
 
   function beginScan() {
@@ -203,13 +194,7 @@ export function HomeApp() {
   ) {
     if (!scansRef.current.isCurrent(scan)) return;
     const label = recognizedLabel(extract, card);
-    if (!appId) {
-      setSolds(null);
-      setPhase("solds");
-      setProgress("");
-      return;
-    }
-    setProgress(label ? `Recognized: ${label} — searching eBay solds…` : "Searching eBay solds…");
+    setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
     await loadSolds(card, extract, undefined, scan);
   }
 
@@ -218,32 +203,22 @@ export function HomeApp() {
     extract: ExtractedCard,
     nameOverride: string | undefined,
     scan: number,
+    ebayAppId = appId,
   ) {
     if (!scansRef.current.isCurrent(scan)) return;
-    if (!appId) {
-      setSolds(null);
-      setPhase("solds");
-      setProgress("");
-      return;
-    }
     setPhase("working");
     const label = recognizedLabel(extract, card);
-    setProgress(label ? `Recognized: ${label} — searching eBay solds…` : "Searching eBay solds…");
+    setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
     const res = await fetch("/api/solds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride, appId)),
+      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride, ebayAppId)),
     });
-    const data = (await res.json()) as SoldsResponse & { error?: string; code?: string };
+    const data = (await res.json()) as SoldsResponse & { error?: string };
     if (!scansRef.current.isCurrent(scan)) return;
     if (!res.ok) {
-      if (data.code === "MISSING_APP_ID" || data.code === "INVALID_APP_ID") {
-        setSetupError(data.error || "eBay rejected that App ID.");
-        setShowSetup(true);
-        return;
-      }
-      throw new Error(data.error || "Could not load solds.");
+      throw new Error(data.error || "Could not load comparables.");
     }
     setSolds(data);
     setPhase("solds");
@@ -315,6 +290,13 @@ export function HomeApp() {
     setAppId(next);
     setSetupError(null);
     setShowSetup(false);
+    if (hasCardIdentity(extracted, selected)) {
+      const scan = scansRef.current.begin();
+      void loadSolds(selected, extracted, undefined, scan, next).catch((err) => {
+        if (!scansRef.current.isCurrent(scan)) return;
+        setError(err instanceof Error ? err.message : "Could not load comparables.");
+      });
+    }
   }
 
   function skipSetup() {
@@ -326,8 +308,16 @@ export function HomeApp() {
   function clearAppId() {
     clearEbayAppId();
     setAppId("");
-    setSolds(null);
     setSetupError(null);
+    if (hasCardIdentity(extracted, selected)) {
+      const scan = scansRef.current.begin();
+      void loadSolds(selected, extracted, undefined, scan, "").catch((err) => {
+        if (!scansRef.current.isCurrent(scan)) return;
+        setError(err instanceof Error ? err.message : "Could not load comparables.");
+      });
+    } else {
+      setSolds(null);
+    }
   }
 
   if (!ready) {
@@ -371,7 +361,7 @@ export function HomeApp() {
           </button>
         </div>
         <p className="mt-2 text-sm text-paper-mute">
-          Photo a Pokémon card. We read the image, then show name, number, set, year, and rarity.
+          Photo a Pokémon card. We read the image, then show name, number, set, year, rarity, and market comps.
         </p>
         <p className="mt-2 text-xs text-paper-mute">{modeNote}</p>
       </header>
@@ -482,7 +472,7 @@ export function HomeApp() {
                       setSelected(card);
                       void finishAfterIdentify(card, extracted, scan).catch((err) => {
                         if (!scansRef.current.isCurrent(scan)) return;
-                        setError(err instanceof Error ? err.message : "Solds failed.");
+                        setError(err instanceof Error ? err.message : "Comparables failed.");
                         setPhase("candidates");
                       });
                     }}
@@ -517,108 +507,16 @@ export function HomeApp() {
         </section>
       ) : null}
 
-      {!appId && (showIdentity || selected) && phase !== "working" ? (
-        <section className="mt-4 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
-          <p className="text-base font-semibold">Add your eBay App ID to see sold prices</p>
-          <p className="mt-1 text-sm text-paper-mute">
-            Identification works now. Sold comps wait until eBay approves your Production App ID.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setSetupError(null);
-              setShowSetup(true);
-            }}
-            className="mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl bg-sky font-semibold text-white"
-          >
-            Add eBay App ID
-          </button>
-        </section>
-      ) : null}
-
-      {appId && solds ? (
-        <section key={solds.query} className="mt-4 safe-bottom">
-          <div
-            className={`rounded-2xl px-4 py-3 text-sm ${
-              solds.demo ? "bg-bolt/15 text-bolt" : "bg-mint/15 text-mint"
-            }`}
-          >
-            {solds.sourceLabel}. {solds.rateLabel}.
-          </div>
-
-          <div className="mt-3 grid gap-2">
-            <article className="rounded-2xl bg-ink-card p-4 ring-1 ring-ink-line">
-              <h3 className="text-sm font-semibold text-paper-mute">
-                {preferRaw ? "Raw / ungraded band" : "Typical sold band"}
-              </h3>
-              <p className="mt-1 text-base">{bandLabel(preferRaw ? solds.raw : solds.typical, solds.usdCadRate)}</p>
-            </article>
-            {solds.graded ? (
-              <article className="rounded-2xl bg-ink-card p-4 ring-1 ring-ink-line">
-                <h3 className="text-sm font-semibold text-paper-mute">Graded solds</h3>
-                <p className="mt-1 text-base">{bandLabel(solds.graded, solds.usdCadRate)}</p>
-              </article>
-            ) : null}
-            {solds.tcgplayer?.marketUsd ? (
-              <article className="rounded-2xl bg-ink-card p-4 ring-1 ring-ink-line">
-                <h3 className="text-sm font-semibold text-paper-mute">TCGPlayer market (not eBay solds)</h3>
-                <p className="mt-1 text-base">
-                  {formatUsd(solds.tcgplayer.marketUsd)} · {formatCad(solds.tcgplayer.marketUsd, solds.usdCadRate)}
-                </p>
-              </article>
-            ) : null}
-          </div>
-
-          <a
-            href={solds.ebaySearchUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-3 flex min-h-12 items-center justify-center rounded-2xl bg-sky font-semibold text-white"
-          >
-            Open eBay sold search
-          </a>
-
-          <h3 className="mb-2 mt-5 text-sm font-semibold uppercase tracking-wide text-paper-mute">
-            Recent solds
-          </h3>
-          {solds.sales.length === 0 ? (
-            <p className="rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper-mute ring-1 ring-ink-line">
-              No sold listings came back for this name and number. Use the eBay sold search link.
-            </p>
-          ) : null}
-          <ul className="grid gap-2">
-            {solds.sales.map((sale) => {
-              const inner = (
-                <>
-                  <div className="flex items-start justify-between gap-3">
-                    <p className="text-sm font-medium leading-snug">{sale.title}</p>
-                    <p className="shrink-0 text-right font-semibold">
-                      {formatUsd(sale.priceUsd)}
-                      <span className="block text-xs font-normal text-paper-mute">
-                        {formatCad(sale.priceUsd, solds.usdCadRate)}
-                      </span>
-                    </p>
-                  </div>
-                  <p className="mt-1 text-xs text-paper-mute">
-                    {formatSoldDate(sale.soldAt)} · {sale.grade}
-                    {sale.url ? " · eBay" : ""}
-                  </p>
-                </>
-              );
-              return (
-                <li key={sale.id} className="rounded-2xl bg-ink-card p-3 ring-1 ring-ink-line">
-                  {sale.url ? (
-                    <a href={sale.url} target="_blank" rel="noreferrer" className="block">
-                      {inner}
-                    </a>
-                  ) : (
-                    inner
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
+      {solds && phase !== "working" ? (
+        <CompsPanel
+          solds={solds}
+          preferRaw={preferRaw}
+          hasAppId={Boolean(appId)}
+          onAddAppId={() => {
+            setSetupError(null);
+            setShowSetup(true);
+          }}
+        />
       ) : null}
 
       <p className="mt-8 text-center text-xs text-paper-mute">

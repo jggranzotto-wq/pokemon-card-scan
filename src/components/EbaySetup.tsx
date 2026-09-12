@@ -31,8 +31,8 @@ export function EbaySetup({ initialValue = "", error, onSave, onSkip, onCancel }
       <p className="text-xs uppercase tracking-[0.2em] text-bolt">the midnightman</p>
       <h1 className="mt-2 text-3xl font-semibold tracking-tight">eBay App ID</h1>
       <p className="mt-2 text-sm text-paper-mute">
-        Card Scan uses your eBay Developer App ID (also called Client ID) to look up recent{" "}
-        <strong className="font-medium text-paper">sold</strong> prices. This is not your seller login.
+        You do not log into eBay. The App ID is optional. Skip to scan now — public market comps still
+        show after a card is recognized. Paste an App ID later if you want live eBay sold listings.
       </p>
 
       <form onSubmit={handleSave} className="mt-6 grid gap-3">
@@ -97,8 +97,8 @@ export function EbaySetup({ initialValue = "", error, onSave, onSkip, onCancel }
           <li>Copy the Production <strong className="font-medium text-paper">App ID (Client ID)</strong>.</li>
         </ol>
         <p className="mt-3">
-          Production keys can take a day to approve. Skip to test card ID this weekend — sold prices stay locked
-          until you save an App ID. Saved only on this phone.
+          Production keys can take a day to approve. Skip anytime — identification and public comps do not
+          need an App ID. This is not your seller login. Saved only on this phone.
         </p>
       </section>
     </main>
