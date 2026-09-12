@@ -13,6 +13,8 @@ import {
 } from "@/lib/ebay-app-id";
 import { CardIdentityPanel } from "@/components/CardIdentity";
 import { CompsPanel } from "@/components/CompsPanel";
+import { ManualIdentify } from "@/components/ManualIdentify";
+import { parseCollectorInput } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
@@ -40,7 +42,6 @@ export function HomeApp() {
   const [candidates, setCandidates] = useState<PokemonCard[]>([]);
   const [selected, setSelected] = useState<PokemonCard | null>(null);
   const [solds, setSolds] = useState<SoldsResponse | null>(null);
-  const [search, setSearch] = useState("");
   const [ready, setReady] = useState(false);
   const [appId, setAppId] = useState("");
   const [showSetup, setShowSetup] = useState(true);
@@ -261,17 +262,33 @@ export function HomeApp() {
     }
   }
 
-  async function onManualSearch(event: React.FormEvent) {
-    event.preventDefault();
-    if (!search.trim()) return;
+  async function onManualSearch(input: {
+    name: string;
+    year?: number;
+    setName?: string;
+    setId?: string;
+    number?: string;
+  }) {
+    const parsed = parseCollectorInput(input.number);
     const scan = beginScan();
     try {
-      setProgress("Searching cards…");
+      setPreview(null);
+      setProgress("Searching the catalog…");
       const res = await fetch("/api/identify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ extracted: { name: search.trim() } }),
+        body: JSON.stringify({
+          extracted: {
+            name: input.name.trim(),
+            set: input.setName,
+            setId: input.setId,
+            setYear: input.year,
+            collectorNumber: parsed.collectorNumber,
+            printedTotal: parsed.printedTotal,
+            confidence: 0.95,
+          },
+        }),
       });
       const data = (await res.json()) as IdentifyResponse & { error?: string };
       if (!scansRef.current.isCurrent(scan)) return;
@@ -361,7 +378,7 @@ export function HomeApp() {
           </button>
         </div>
         <p className="mt-2 text-sm text-paper-mute">
-          Photo a Pokémon card. We read the image, then show name, number, set, year, rarity, and market comps.
+          Photo a Pokémon card, or type the name and pick the year and set. Then we show name, number, set, year, rarity, and market comps.
         </p>
         <p className="mt-2 text-xs text-paper-mute">{modeNote}</p>
       </header>
@@ -431,17 +448,7 @@ export function HomeApp() {
         }}
       />
 
-      <form onSubmit={(event) => void onManualSearch(event)} className="mt-5 flex gap-2">
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Or search name / number"
-          className="min-h-12 flex-1 rounded-2xl bg-ink-card px-4 text-base ring-1 ring-ink-line outline-none placeholder:text-paper-mute"
-        />
-        <button type="submit" className="min-h-12 rounded-2xl bg-sky px-4 font-semibold text-white">
-          Search
-        </button>
-      </form>
+      <ManualIdentify busy={phase === "working"} onSearch={(input) => void onManualSearch(input)} />
 
       {progress ? (
         <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-bolt">{progress}</p>

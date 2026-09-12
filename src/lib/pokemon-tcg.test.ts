@@ -26,4 +26,15 @@ describe("rankCandidates", () => {
     );
     assert.equal(ranked[0].id, "base1-4");
   });
+
+  it("prefers the official set id and year from the manual form", () => {
+    const ranked = rankCandidates(
+      [
+        card({ id: "base4-4", name: "Charizard", setName: "Base Set 2", setId: "base4", number: "4", setYear: 2000 }),
+        card({ id: "base1-4", name: "Charizard", setName: "Base Set", setId: "base1", number: "4", setYear: 1999 }),
+      ],
+      { name: "Charizard", set: "Base Set", setId: "base1", setYear: 1999 },
+    );
+    assert.equal(ranked[0].id, "base1-4");
+  });
 });

@@ -39,8 +39,9 @@ The App ID is stored only in this browser’s `localStorage` (`card-scan.ebayApp
 ## Identify + solds
 
 1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
-2. **Identify** — the photo is sent to `/api/identify`. Vision runs if those keys exist; otherwise the server reads the image with OCR (English and Japanese). Japanese names map to the English catalog name. Garbage OCR is never shown as the name. Missing catalog fields say **Unknown**. This step does not need an App ID.
-3. **Comparables** — always, after a successful ID. Keywords are the richer identity: **name + collector number + set**. Public TCGPlayer market prices come from pokemontcg.io (no user key). PriceCharting and eBay sold-search links are offered so you can tap through. Live eBay sold listings run only when an App ID is saved and Finding accepts it. Missing or unofficial cards say so instead of inventing a price. Each new photo starts a new scan and refreshes every identity field.
+2. **Or find by name** — type the Pokémon / card name, pick a catalog **year** and **set**, optionally a collector number, then **Find this card**. No photo required. Years and set names come from pokemontcg.io / TCGdex. If several printings match, tap the one on your card.
+3. **Identify** — the photo is sent to `/api/identify`. Vision runs if those keys exist; otherwise the server reads the image with OCR (English and Japanese). Japanese names map to the English catalog name. Garbage OCR is never shown as the name. Missing catalog fields say **Unknown**. This step does not need an App ID.
+4. **Comparables** — always, after a successful ID. Keywords are the richer identity: **name + collector number + set**. Public TCGPlayer market prices come from pokemontcg.io (no user key). PriceCharting and eBay sold-search links are offered so you can tap through. Live eBay sold listings run only when an App ID is saved and Finding accepts it. Missing or unofficial cards say so instead of inventing a price. Each new photo starts a new scan and refreshes every identity field.
 
 ## Optional environment variables
 
