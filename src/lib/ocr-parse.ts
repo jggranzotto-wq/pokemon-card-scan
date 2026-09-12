@@ -51,12 +51,12 @@ function bestPokemonName(haystack: string): { name: string; score: number } | nu
       if (!best || score > best.score) best = { name, score };
       continue;
     }
-    if (n.length < 4) continue;
-    const words = text.split(" ").filter((w) => w.length >= 3);
+    if (n.length < 6) continue;
+    const words = text.split(" ").filter((w) => /^[a-z']{6,}$/.test(w));
     for (const word of words) {
       if (Math.abs(word.length - n.length) > 2) continue;
       const dist = levenshtein(word, n.replace(/ /g, ""));
-      if (dist <= 1 || (n.length >= 7 && dist <= 2)) {
+      if (dist <= 1 || (n.length >= 8 && dist <= 2)) {
         const score = 0.72 - dist * 0.08;
         if (!best || score > best.score) best = { name, score };
       }
@@ -99,10 +99,13 @@ export function isPlausibleCardName(name?: string | null): boolean {
   if (junk >= 2) return false;
 
   if (englishNameFromJapanese(trimmed)) return true;
+  if (/[\u3040-\u30ff\u4e00-\u9faf]/.test(trimmed)) return false;
   if (POKEMON_NAMES.some((n) => n.toLowerCase() === trimmed.toLowerCase())) return true;
   if (bestPokemonName(trimmed)) return true;
   if (/\b(GX|EX|VMAX|VSTAR|V-UNION)\b/i.test(trimmed) && letters.length >= 4) return true;
-  if (trimmed.split(/\s+/).filter(Boolean).length >= 2 && junk === 0 && letters.length >= 6) return true;
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  const realWords = words.filter((w) => /[A-Za-z]{3,}/.test(w));
+  if (realWords.length >= 2 && junk === 0 && letters.length >= 8) return true;
   return false;
 }
 

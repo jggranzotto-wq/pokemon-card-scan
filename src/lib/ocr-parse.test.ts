@@ -40,4 +40,15 @@ describe("parseOcrText", () => {
     assert.equal(isPlausibleCardName("ooVETEE)"), false);
     assert.equal(isPlausibleCardName("Pikachu"), true);
   });
+
+  it("does not fuzzy-match short garbage like NATH to Natu", () => {
+    const parsed = parseOcrText("WINNT) > o NATH\npo Sm A i");
+    assert.notEqual(parsed.name, "Natu");
+  });
+
+  it("does not use random Japanese OCR words as the name", () => {
+    const parsed = parseOcrText("タッ タン て ママ ミー ク 2 ム 人 市");
+    assert.equal(parsed.name, undefined);
+    assert.equal(isPlausibleCardName("Vass de"), false);
+  });
 });

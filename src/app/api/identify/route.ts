@@ -95,12 +95,17 @@ async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<
 
   const englishText = await ocrCardImage(bytes, "eng");
   let extracted = parseOcrText(englishText);
-  if (!isPlausibleCardName(extracted.name)) {
+  const englishWeak =
+    !isPlausibleCardName(extracted.name) ||
+    (extracted.confidence ?? 0) < 0.85 ||
+    extracted.language === "Japanese";
+  if (englishWeak) {
     const japaneseText = await ocrCardImage(bytes, "jpn");
     const japanese = parseOcrText(japaneseText);
-    if (isPlausibleCardName(japanese.name) || japanese.language === "Japanese") {
-      extracted = japanese;
-    }
+    const japaneseBetter =
+      (japanese.confidence ?? 0) > (extracted.confidence ?? 0) ||
+      (japanese.language === "Japanese" && isPlausibleCardName(japanese.name));
+    if (japaneseBetter) extracted = japanese;
   }
   return identifyFromExtracted(extracted, "ocr");
 }
