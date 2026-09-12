@@ -1,6 +1,6 @@
 import type { CardLanguage, ExtractedCard, PokemonCard } from "../types/card";
 import { yearFromReleaseDate } from "./card-year";
-import { inferSetFromText } from "./ocr-parse";
+import { englishNameFromJapanese, inferSetFromText, japaneseNameForEnglish } from "./ocr-parse";
 
 const POKEMONTCG = "https://api.pokemontcg.io/v2";
 const TCGDEX = "https://api.tcgdex.net/v2";
@@ -186,11 +186,20 @@ export async function listSetNames(): Promise<string[]> {
     return setCache.names;
   }
 
-  const tcgdex = await fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`);
-  if (tcgdex?.length) {
+  const [enSets, jaSets] = await Promise.all([
+    fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`),
+    fetchJson<TcgdexSet[]>(`${TCGDEX}/ja/sets`),
+  ]);
+  if (enSets?.length || jaSets?.length) {
     const byId: Record<string, TcgdexSet> = {};
-    for (const set of tcgdex) byId[set.id] = set;
-    const names = Array.from(new Set([...COMMON_SETS, ...tcgdex.map((s) => s.name)]));
+    for (const set of enSets ?? []) byId[set.id] = set;
+    for (const set of jaSets ?? []) {
+      byId[set.id] = set;
+      rememberSetYear(set.id, set.releaseDate);
+    }
+    const names = Array.from(
+      new Set([...COMMON_SETS, ...(enSets ?? []).map((s) => s.name), ...(jaSets ?? []).map((s) => s.name)]),
+    );
     setCache = { names, byId, at: Date.now() };
     return names;
   }
@@ -236,9 +245,15 @@ async function resolveSetYear(setId: string): Promise<number | null> {
   const cached = setYearById.get(setId);
   if (cached) return cached;
 
-  const tcgdex = await fetchJson<TcgdexSet>(`${TCGDEX}/en/sets/${encodeURIComponent(setId)}`);
+  const tcgdex =
+    (await fetchJson<TcgdexSet>(`${TCGDEX}/en/sets/${encodeURIComponent(setId)}`)) ??
+    (await fetchJson<TcgdexSet>(`${TCGDEX}/ja/sets/${encodeURIComponent(setId)}`));
   rememberSetYear(setId, tcgdex?.releaseDate);
   return setYearById.get(setId) ?? yearFromReleaseDate(tcgdex?.releaseDate);
+}
+
+function isPromoSetId(setId?: string): boolean {
+  return Boolean(setId && /^[A-Za-z0-9]{1,4}-P$/i.test(setId));
 }
 
 function printedSetName(setId: string, fallback?: string): string {
@@ -266,9 +281,15 @@ function tcgplayerSummary(card: ApiCard): PokemonCard["tcgplayer"] {
   };
 }
 
-function languageFromSet(setId: string, setName: string): CardLanguage {
+function languageFromSet(setId: string, setName: string, hint?: CardLanguage): CardLanguage {
+  if (hint === "Japanese") return "Japanese";
   if (/(japanese|jp\b)/i.test(setName) || /jpn|japan/i.test(setId)) return "Japanese";
+  if (/[\u3040-\u30ff\u4e00-\u9faf]/.test(setName)) return "Japanese";
   return "English";
+}
+
+function catalogName(name: string): string {
+  return englishNameFromJapanese(name) || name;
 }
 
 function variantHintsFromRarity(rarity?: string, extras: string[] = []): string[] {
@@ -311,8 +332,9 @@ function tcgdexImages(image?: string): { small?: string; large?: string } {
   return { small: `${image}/low.webp`, large: `${image}/high.webp` };
 }
 
-function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard): PokemonCard {
+function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard, languageHint?: CardLanguage): PokemonCard {
   const resolvedSet = detail?.set ?? set;
+  const setId = resolvedSet?.id ?? setIdFromCardId(card.id);
   const number = card.localId.replace(/^0+/, "") || card.localId;
   const printedTotal = resolvedSet?.cardCount?.official;
   const extras: string[] = [];
@@ -324,17 +346,22 @@ function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard
     prices?.holofoil?.marketPrice ?? prices?.reverseHolofoil?.marketPrice ?? prices?.normal?.marketPrice;
   const low = prices?.holofoil?.lowPrice ?? prices?.normal?.lowPrice;
   const high = prices?.holofoil?.highPrice ?? prices?.normal?.highPrice;
+  const printedNumber = isPromoSetId(setId)
+    ? `${card.localId}/${setId}`
+    : printedTotal
+      ? `${number}/${printedTotal}`
+      : number;
   return {
     id: card.id,
-    name: card.name,
-    setName: printedSetName(resolvedSet?.id ?? setIdFromCardId(card.id), resolvedSet?.name),
-    setId: resolvedSet?.id ?? setIdFromCardId(card.id),
+    name: catalogName(card.name),
+    setName: printedSetName(setId, resolvedSet?.name),
+    setId,
     number,
-    printedNumber: printedTotal ? `${number}/${printedTotal}` : number,
+    printedNumber,
     rarity: detail?.rarity,
     setYear: yearForSet(resolvedSet?.id ?? setIdFromCardId(card.id), resolvedSet?.releaseDate),
     artist: detail?.illustrator,
-    language: languageFromSet(resolvedSet?.id ?? "", resolvedSet?.name ?? ""),
+    language: languageFromSet(setId, resolvedSet?.name ?? "", languageHint),
     images: tcgdexImages(card.image ?? detail?.image),
     variantHints: variantHintsFromRarity(detail?.rarity, extras),
     tcgplayer:
@@ -362,24 +389,31 @@ async function searchPokemonTcg(q: string): Promise<PokemonCard[]> {
 async function searchTcgdex(extracted: ExtractedCard): Promise<PokemonCard[]> {
   const name = extracted.name?.trim();
   if (!name) return [];
-  const lang = extracted.language === "Japanese" ? "ja" : "en";
-  const list = await fetchJson<TcgdexListCard[]>(
-    `${TCGDEX}/${lang}/cards?name=${encodeURIComponent(name)}`,
-  );
-  if (!list?.length) return [];
+  const jaName = japaneseNameForEnglish(name) || (extracted.language === "Japanese" ? name : undefined);
+  const langs: Array<{ lang: "en" | "ja"; q: string }> = [{ lang: "en", q: name }];
+  if (jaName && jaName !== name) langs.push({ lang: "ja", q: jaName });
+  else if (extracted.language === "Japanese") langs.push({ lang: "ja", q: name });
 
   await listSetNames();
   const wantNumber = extracted.collectorNumber?.replace(/^0+/, "");
-  const filtered = list.filter((card) => {
-    if (!wantNumber) return true;
-    return card.localId.replace(/^0+/, "") === wantNumber;
-  });
-  const pool = filtered.length ? filtered : list;
-  const mapped = pool.slice(0, 24).map((card) => {
-    const set = setCache?.byId[setIdFromCardId(card.id)];
-    return tcgdexToCard(card, set);
-  });
-  return rankCandidates(mapped, extracted).slice(0, 8);
+  const wantSet = (extracted.set || extracted.printedTotal || "").toLowerCase();
+  const out: PokemonCard[] = [];
+  for (const { lang, q } of langs) {
+    const list = await fetchJson<TcgdexListCard[]>(`${TCGDEX}/${lang}/cards?name=${encodeURIComponent(q)}`);
+    if (!list?.length) continue;
+    const filtered = list.filter((card) => {
+      const setId = setIdFromCardId(card.id);
+      if (wantSet && isPromoSetId(wantSet) && setId.toLowerCase() !== wantSet) return false;
+      if (!wantNumber) return true;
+      return card.localId.replace(/^0+/, "") === wantNumber;
+    });
+    const pool = filtered.length ? filtered : list;
+    for (const card of pool.slice(0, 24)) {
+      const set = setCache?.byId[setIdFromCardId(card.id)];
+      out.push(tcgdexToCard(card, set, undefined, lang === "ja" ? "Japanese" : extracted.language));
+    }
+  }
+  return rankCandidates(out, extracted).slice(0, 8);
 }
 
 export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard[]> {
@@ -467,6 +501,7 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
     else if (wantName && card.name.toLowerCase().includes(wantName)) s += 4;
     if (wantNumber && card.number.replace(/^0+/, "") === wantNumber) s += 7;
     if (wantSet && card.setName.toLowerCase() === wantSet) s += 8;
+    else if (wantSet && card.setId.toLowerCase() === wantSet) s += 8;
     else if (wantSet && card.setName.toLowerCase().includes(wantSet)) s += 2;
     if (extracted.printedTotal && card.printedNumber.endsWith(`/${extracted.printedTotal}`)) s += 6;
     if (extracted.language && card.language === extracted.language) s += 1;
@@ -488,7 +523,7 @@ export async function getCardById(id: string): Promise<PokemonCard | null> {
   for (const lang of ["en", "ja"] as const) {
     const detail = await fetchJson<TcgdexCard>(`${TCGDEX}/${lang}/cards/${encodeURIComponent(id)}`);
     if (detail?.id) {
-      const card = tcgdexToCard(detail, detail.set, detail);
+      const card = tcgdexToCard(detail, detail.set, detail, lang === "ja" ? "Japanese" : undefined);
       if (card.setYear == null) {
         card.setYear = await resolveSetYear(card.setId);
       }

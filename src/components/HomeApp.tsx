@@ -13,6 +13,7 @@ import {
 } from "@/lib/ebay-app-id";
 import { formatCad, formatUsd } from "@/lib/money";
 import { CardIdentityPanel } from "@/components/CardIdentity";
+import { isPlausibleCardName, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
@@ -76,7 +77,7 @@ export function HomeApp() {
 
   const preferRaw = !extracted.isSlab;
   const identity = cardIdentity(extracted, selected);
-  const showIdentity = hasCardIdentity(identity);
+  const showIdentity = hasCardIdentity(extracted, selected);
   const recognized = recognizedLabel(extracted, selected);
   const identityNote = [
     extracted.variant && extracted.variant !== "unknown" ? extracted.variant : null,
@@ -117,10 +118,16 @@ export function HomeApp() {
         throw new Error(data.error || data.message || "Could not identify that card.");
       }
 
-      if (data.message === "ocr-required" || (!data.candidates?.length && !data.extracted?.name)) {
-        const text = await readCardText(blob, (status) => {
-          if (scansRef.current.isCurrent(scan)) setProgress(status);
-        });
+      if (data.message === "ocr-required") {
+        setProgress("Reading the card on this phone…");
+        const text = await Promise.race([
+          readCardText(blob, (status) => {
+            if (scansRef.current.isCurrent(scan)) setProgress(status);
+          }),
+          new Promise<string>((_, reject) => {
+            setTimeout(() => reject(new Error(READ_FAIL_MESSAGE)), 25_000);
+          }),
+        ]);
         if (!scansRef.current.isCurrent(scan)) return;
         setProgress("Matching the card…");
         const ocrRes = await fetch("/api/identify", {
@@ -131,7 +138,7 @@ export function HomeApp() {
         });
         const ocrData = (await ocrRes.json()) as IdentifyResponse & { error?: string };
         if (!scansRef.current.isCurrent(scan)) return;
-        if (!ocrRes.ok) throw new Error(ocrData.error || "OCR match failed.");
+        if (!ocrRes.ok) throw new Error(ocrData.error || READ_FAIL_MESSAGE);
         await applyIdentify(ocrData, scan);
         return;
       }
@@ -145,7 +152,10 @@ export function HomeApp() {
 
   async function applyIdentify(data: IdentifyResponse, scan: number) {
     if (!scansRef.current.isCurrent(scan)) return;
-    const extract = data.extracted ?? {};
+    const extract = {
+      ...(data.extracted ?? {}),
+      name: isPlausibleCardName(data.extracted?.name) ? data.extracted?.name : undefined,
+    };
     setExtracted(extract);
     setCandidates(data.candidates ?? []);
     const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
@@ -159,10 +169,11 @@ export function HomeApp() {
     setProgress("");
     if (!data.candidates?.length && extract.name) {
       await finishAfterIdentify(null, extract, scan);
+      if (data.message) setError(data.message);
       return;
     }
     if (!data.candidates?.length) {
-      setError(data.message || "No match. Search by name or try another photo.");
+      setError(data.message || READ_FAIL_MESSAGE);
     }
   }
 

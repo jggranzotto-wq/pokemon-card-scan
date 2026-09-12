@@ -59,4 +59,9 @@ describe("cardIdentity", () => {
     assert.equal(identity.year, "1999");
     assert.equal(identity.rarity, "Unknown");
   });
+
+  it("does not show OCR garbage as the card name", () => {
+    const identity = cardIdentity({ name: "ooVETEE)", language: "English" });
+    assert.equal(identity.name, "Unknown");
+  });
 });

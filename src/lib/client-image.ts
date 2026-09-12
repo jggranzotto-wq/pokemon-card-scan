@@ -11,18 +11,42 @@ export function preloadOcr(): Promise<WorkerLike> {
   return workerPromise;
 }
 
-export async function compressImage(file: Blob, maxEdge = 1600, quality = 0.82): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+async function bitmapFromBlob(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(file);
+    } catch {
+      // HEIC / odd Android camera formats fall through to HTMLImageElement.
+    }
+  }
+  const url = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error("Could not read that photo."));
+      el.src = url;
+    });
+    return image;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+export async function compressImage(file: Blob, maxEdge = 1800, quality = 0.86): Promise<Blob> {
+  const source = await bitmapFromBlob(file);
+  const srcW = "width" in source ? source.width : 0;
+  const srcH = "height" in source ? source.height : 0;
+  const scale = Math.min(1, maxEdge / Math.max(srcW, srcH));
+  const width = Math.max(1, Math.round(srcW * scale));
+  const height = Math.max(1, Math.round(srcH * scale));
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not read that photo.");
-  ctx.drawImage(bitmap, 0, 0, width, height);
-  bitmap.close();
+  ctx.drawImage(source, 0, 0, width, height);
+  if ("close" in source && typeof source.close === "function") source.close();
 
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, "image/jpeg", quality),

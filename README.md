@@ -39,7 +39,7 @@ The App ID is stored only in this browser’s `localStorage` (`card-scan.ebayApp
 ## Identify + solds
 
 1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
-2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex for official **set name, release year, and rarity**. The screen shows all five fields. Missing values say **Unknown** — they are not guessed. This step does not need an App ID.
+2. **Identify** — the photo is sent to `/api/identify`. Vision runs if those keys exist; otherwise the server reads the image with OCR (English and Japanese). Japanese names map to the English catalog name. Garbage OCR is never shown as the name. Missing catalog fields say **Unknown**. This step does not need an App ID.
 3. **Solds** — only after an App ID is saved. Keywords are the richer identity: **name + collector number + set**. Each new photo starts a new scan and refreshes every identity field.
 
 ## Optional environment variables
