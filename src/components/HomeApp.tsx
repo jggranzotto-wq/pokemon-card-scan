@@ -3,7 +3,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EbaySetup } from "@/components/EbaySetup";
 import { compressImage, preloadOcr, readCardText, SAMPLE_CARD } from "@/lib/client-image";
-import { clearEbayAppId, readEbayAppId, writeEbayAppId } from "@/lib/ebay-app-id";
+import {
+  clearEbayAppId,
+  markEbaySetupSeen,
+  readEbayAppId,
+  readEbaySetupSeen,
+  shouldShowEbaySetupOnLaunch,
+  writeEbayAppId,
+} from "@/lib/ebay-app-id";
 import { formatCad, formatUsd } from "@/lib/money";
 import { recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
@@ -51,7 +58,7 @@ export function HomeApp() {
   useEffect(() => {
     const saved = readEbayAppId();
     setAppId(saved);
-    setShowSetup(!saved);
+    setShowSetup(shouldShowEbaySetupOnLaunch(saved, readEbaySetupSeen()));
     setReady(true);
     void fetch("/api/status")
       .then((res) => res.json())
@@ -71,8 +78,8 @@ export function HomeApp() {
 
   const modeNote = useMemo(() => {
     const id = status?.vision ? "Vision ID on" : "OCR reads the card photo (not the filename)";
-    return `${id} · eBay solds use your App ID`;
-  }, [status]);
+    return appId ? `${id} · eBay solds use your App ID` : `${id} · Identify only until you add an App ID`;
+  }, [status, appId]);
 
   function beginScan() {
     const scan = scansRef.current.begin();
@@ -134,21 +141,36 @@ export function HomeApp() {
     const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
     if (auto) {
       setSelected(auto);
-      setProgress(`Recognized: ${recognizedLabel(extract, auto)} — searching eBay solds…`);
-      await loadSolds(auto, extract, undefined, scan);
+      await finishAfterIdentify(auto, extract, scan);
       return;
     }
     if (!scansRef.current.isCurrent(scan)) return;
     setPhase("candidates");
     setProgress("");
     if (!data.candidates?.length && extract.name) {
-      setProgress(`Recognized: ${recognizedLabel(extract)} — searching eBay solds…`);
-      await loadSolds(null, extract, undefined, scan);
+      await finishAfterIdentify(null, extract, scan);
       return;
     }
     if (!data.candidates?.length) {
       setError(data.message || "No match. Search by name or try another photo.");
     }
+  }
+
+  async function finishAfterIdentify(
+    card: PokemonCard | null,
+    extract: ExtractedCard,
+    scan: number,
+  ) {
+    if (!scansRef.current.isCurrent(scan)) return;
+    const label = recognizedLabel(extract, card);
+    if (!appId) {
+      setSolds(null);
+      setPhase("solds");
+      setProgress("");
+      return;
+    }
+    setProgress(label ? `Recognized: ${label} — searching eBay solds…` : "Searching eBay solds…");
+    await loadSolds(card, extract, undefined, scan);
   }
 
   async function loadSolds(
@@ -159,8 +181,9 @@ export function HomeApp() {
   ) {
     if (!scansRef.current.isCurrent(scan)) return;
     if (!appId) {
-      setSetupError("Add your eBay App ID first.");
-      setShowSetup(true);
+      setSolds(null);
+      setPhase("solds");
+      setProgress("");
       return;
     }
     setPhase("working");
@@ -254,11 +277,17 @@ export function HomeApp() {
     setShowSetup(false);
   }
 
+  function skipSetup() {
+    markEbaySetupSeen();
+    setSetupError(null);
+    setShowSetup(false);
+  }
+
   function clearAppId() {
     clearEbayAppId();
     setAppId("");
+    setSolds(null);
     setSetupError(null);
-    setShowSetup(true);
   }
 
   if (!ready) {
@@ -275,7 +304,8 @@ export function HomeApp() {
         initialValue={appId}
         error={setupError}
         onSave={saveAppId}
-        onCancel={appId ? () => setShowSetup(false) : undefined}
+        onSkip={skipSetup}
+        onCancel={readEbaySetupSeen() || Boolean(appId) ? () => setShowSetup(false) : undefined}
       />
     );
   }
@@ -418,7 +448,7 @@ export function HomeApp() {
                       const scan = scansRef.current.begin();
                       setSolds(null);
                       setSelected(card);
-                      void loadSolds(card, extracted, undefined, scan).catch((err) => {
+                      void finishAfterIdentify(card, extracted, scan).catch((err) => {
                         if (!scansRef.current.isCurrent(scan)) return;
                         setError(err instanceof Error ? err.message : "Solds failed.");
                         setPhase("candidates");
@@ -468,7 +498,26 @@ export function HomeApp() {
         </section>
       ) : null}
 
-      {solds ? (
+      {!appId && (recognized || selected) && phase !== "working" ? (
+        <section className="mt-4 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
+          <p className="text-base font-semibold">Add your eBay App ID to see sold prices</p>
+          <p className="mt-1 text-sm text-paper-mute">
+            Identification works now. Sold comps wait until eBay approves your Production App ID.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setSetupError(null);
+              setShowSetup(true);
+            }}
+            className="mt-4 flex min-h-12 w-full items-center justify-center rounded-2xl bg-sky font-semibold text-white"
+          >
+            Add eBay App ID
+          </button>
+        </section>
+      ) : null}
+
+      {appId && solds ? (
         <section key={solds.query} className="mt-4 safe-bottom">
           <div
             className={`rounded-2xl px-4 py-3 text-sm ${

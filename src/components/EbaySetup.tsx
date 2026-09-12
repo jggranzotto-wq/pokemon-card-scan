@@ -7,10 +7,11 @@ type Props = {
   initialValue?: string;
   error?: string | null;
   onSave: (appId: string) => void;
+  onSkip: () => void;
   onCancel?: () => void;
 };
 
-export function EbaySetup({ initialValue = "", error, onSave, onCancel }: Props) {
+export function EbaySetup({ initialValue = "", error, onSave, onSkip, onCancel }: Props) {
   const [value, setValue] = useState(initialValue);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -54,6 +55,13 @@ export function EbaySetup({ initialValue = "", error, onSave, onCancel }: Props)
         >
           Save
         </button>
+        <button
+          type="button"
+          onClick={onSkip}
+          className="min-h-14 rounded-2xl bg-ink-raised px-4 text-lg font-semibold ring-1 ring-ink-line active:scale-[0.99]"
+        >
+          Scan without eBay for now
+        </button>
         {onCancel ? (
           <button
             type="button"
@@ -88,7 +96,10 @@ export function EbaySetup({ initialValue = "", error, onSave, onCancel }: Props)
           </li>
           <li>Copy the Production <strong className="font-medium text-paper">App ID (Client ID)</strong>.</li>
         </ol>
-        <p className="mt-3">Saved only on this phone. You can change or clear it later from settings.</p>
+        <p className="mt-3">
+          Production keys can take a day to approve. Skip to test card ID this weekend — sold prices stay locked
+          until you save an App ID. Saved only on this phone.
+        </p>
       </section>
     </main>
   );

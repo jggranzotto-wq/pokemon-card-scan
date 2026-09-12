@@ -17,7 +17,7 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 1. Find your computer’s LAN IP (`ipconfig` / `ifconfig` / `ip addr`).
 2. On Android Chrome, open `http://YOUR-LAN-IP:3000`.
-3. On first launch, paste your eBay App ID and tap **Save**.
+3. On first launch, paste your eBay App ID and tap **Save**, or tap **Scan without eBay for now**.
 4. Grant camera access when prompted.
 5. Optional: Chrome menu → **Add to Home screen**.
 
@@ -25,22 +25,22 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 ## eBay App ID (first screen)
 
-The app asks for an App ID **before** camera/upload.
+The first screen asks for an App ID. You can **Save** it, or tap **Scan without eBay for now** to open the camera immediately.
 
 1. Open [developer.ebay.com](https://developer.ebay.com/) and sign in.
 2. Open [Application Keys](https://developer.ebay.com/my/keys).
 3. Copy the Production **App ID (Client ID)** — not Cert ID, not your seller password.
-4. Paste it and tap Save.
+4. Paste it and tap Save when eBay approves it (often the next business day).
 
-It is stored only in this browser’s `localStorage` (`card-scan.ebayAppId`). Nothing is committed to the repo. Change or clear it later with the settings gear or the footer links.
+Skip remembers that you left setup, so the next launch goes to scan. Identification still works with no App ID. The solds panel then says **Add your eBay App ID to see sold prices** and does **not** call eBay. After you save an App ID, solds run as usual.
 
-The App ID is sent with each solds request to the Finding API (`findCompletedItems`, sold items only). If it is missing or eBay rejects it, the app shows an error and returns you to the App ID field. It does **not** fall back to a hardcoded key or fake live solds.
+The App ID is stored only in this browser’s `localStorage` (`card-scan.ebayAppId`). Nothing is committed to the repo. Change or clear it later with the settings gear or the footer links. It does **not** fall back to a hardcoded key or fake live solds.
 
 ## Identify + solds
 
 1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
-2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex. The screen shows **Recognized: {name} {number}** before solds load.
-3. **Solds** — eBay search keywords are that recognized **name + collector/set number** (plus set when known). Each new photo starts a new scan and does not reuse the previous card’s solds.
+2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex. The screen shows **Recognized: {name} {number}**. This step does not need an App ID.
+3. **Solds** — only after an App ID is saved. Keywords are that recognized **name + collector/set number**. Each new photo starts a new scan and does not reuse the previous card’s solds.
 
 ## Optional environment variables
 
