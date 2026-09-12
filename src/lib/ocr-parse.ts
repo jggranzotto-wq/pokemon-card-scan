@@ -1,3 +1,4 @@
+import { yearFromCopyrightText } from "./card-year";
 import { POKEMON_NAMES } from "./pokemon-names";
 import { photoLooksLikeSlab } from "./grades";
 import type { CardLanguage, CardVariant, ExtractedCard } from "../types/card";
@@ -118,6 +119,7 @@ export function parseOcrText(raw: string): ExtractedCard {
     grade: null,
     confidence: nameHit ? Math.min(0.92, nameHit.score) : name ? 0.35 : 0.1,
     ocrText: raw.slice(0, 4000),
+    copyrightYear: yearFromCopyrightText(raw),
   };
 }
 

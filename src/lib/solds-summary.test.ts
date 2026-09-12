@@ -25,10 +25,14 @@ describe("summarizeSolds", () => {
 });
 
 describe("soldsQuery", () => {
-  it("builds a simple eBay keyword string", () => {
+  it("uses name, collector number, and set so comps stay tight", () => {
     assert.equal(
       soldsQuery({ name: "Pikachu", setName: "Base", number: "58", printedNumber: "58/102", variant: "holo" }),
       "Pikachu 58/102 Pokemon Base holo",
+    );
+    assert.equal(
+      soldsQuery({ name: "Charizard", setName: "Base Set", printedNumber: "4/102" }),
+      "Charizard 4/102 Pokemon Base Set",
     );
   });
 });

@@ -12,7 +12,8 @@ import {
   writeEbayAppId,
 } from "@/lib/ebay-app-id";
 import { formatCad, formatUsd } from "@/lib/money";
-import { recognizedLabel } from "@/lib/recognized";
+import { CardIdentityPanel } from "@/components/CardIdentity";
+import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
 import type {
@@ -74,7 +75,16 @@ export function HomeApp() {
   }, [preview]);
 
   const preferRaw = !extracted.isSlab;
+  const identity = cardIdentity(extracted, selected);
+  const showIdentity = hasCardIdentity(identity);
   const recognized = recognizedLabel(extracted, selected);
+  const identityNote = [
+    extracted.variant && extracted.variant !== "unknown" ? extracted.variant : null,
+    extracted.language || selected?.language,
+    extracted.isSlab ? "slab" : recognized ? "treating as raw" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const modeNote = useMemo(() => {
     const id = status?.vision ? "Vision ID on" : "OCR reads the card photo (not the filename)";
@@ -331,7 +341,7 @@ export function HomeApp() {
           </button>
         </div>
         <p className="mt-2 text-sm text-paper-mute">
-          Photo a Pokémon card. We read the name and number from the image, then search eBay solds.
+          Photo a Pokémon card. We read the image, then show name, number, set, year, and rarity.
         </p>
         <p className="mt-2 text-xs text-paper-mute">{modeNote}</p>
       </header>
@@ -420,16 +430,8 @@ export function HomeApp() {
         <p className="mt-4 rounded-2xl bg-coral/15 px-4 py-3 text-sm text-coral">{error}</p>
       ) : null}
 
-      {recognized ? (
-        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-base font-semibold ring-1 ring-ink-line">
-          Recognized: {recognized}
-          <span className="mt-1 block text-sm font-normal text-paper-mute">
-            {extracted.set ? `${extracted.set}` : selected?.setName ?? ""}
-            {extracted.variant && extracted.variant !== "unknown" ? ` · ${extracted.variant}` : ""}
-            {extracted.language ? ` · ${extracted.language}` : ""}
-            {extracted.isSlab ? " · slab" : " · treating as raw"}
-          </span>
-        </p>
+      {showIdentity ? (
+        <CardIdentityPanel identity={identity} image={selected?.images.small} note={identityNote} />
       ) : null}
 
       {candidates.length > 0 && phase !== "working" ? (
@@ -467,8 +469,14 @@ export function HomeApp() {
                     <span>
                       <span className="block font-semibold">{card.name}</span>
                       <span className="block text-sm text-paper-mute">
-                        {card.setName} · {card.printedNumber}
-                        {card.rarity ? ` · ${card.rarity}` : ""}
+                        {[
+                          card.printedNumber,
+                          card.setName,
+                          card.setYear ?? null,
+                          card.rarity || "Unknown",
+                        ]
+                          .filter((part) => part != null && part !== "")
+                          .join(" · ")}
                       </span>
                     </span>
                   </button>
@@ -479,26 +487,7 @@ export function HomeApp() {
         </section>
       ) : null}
 
-      {selected && phase === "solds" ? (
-        <section className="mt-6 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
-          <div className="flex gap-3">
-            {selected.images.small ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={selected.images.small} alt="" className="h-24 w-[4.4rem] rounded-lg object-cover" />
-            ) : null}
-            <div>
-              <h2 className="text-xl font-semibold">{selected.name}</h2>
-              <p className="text-sm text-paper-mute">
-                {selected.setName} · {selected.printedNumber}
-                {selected.rarity ? ` · ${selected.rarity}` : ""}
-              </p>
-              <p className="text-xs text-paper-mute">{selected.language}</p>
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {!appId && (recognized || selected) && phase !== "working" ? (
+      {!appId && (showIdentity || selected) && phase !== "working" ? (
         <section className="mt-4 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
           <p className="text-base font-semibold">Add your eBay App ID to see sold prices</p>
           <p className="mt-1 text-sm text-paper-mute">

@@ -1,3 +1,4 @@
+import { isPlausibleTcgYear } from "./card-year";
 import type { CardLanguage, CardVariant, ExtractedCard } from "../types/card";
 
 const PROMPT = `Identify the Pokémon trading card in this photo.
@@ -11,9 +12,11 @@ Return JSON only with this shape:
   "language": "English" | "Japanese" | "Other",
   "isSlab": true if the card is in a PSA/BGS/CGC/SGC/ACE/TAG case,
   "grade": "PSA 10" or null,
+  "copyrightYear": 1999 if a © year is clearly printed, else null,
   "confidence": 0 to 1
 }
 Prefer the printed Pokémon name, not the attack names. If it is a trainer or energy, still return that name.
+Do not guess set year or rarity — those come from the official catalog.
 If you cannot read the card, still return JSON with nulls and low confidence.`;
 
 function asVariant(value: unknown): CardVariant {
@@ -47,8 +50,14 @@ function cleanJson(text: string): ExtractedCard {
     language: asLanguage(parsed.language),
     isSlab: Boolean(parsed.isSlab),
     grade: typeof parsed.grade === "string" ? parsed.grade : null,
+    copyrightYear: yearFromVision(parsed.copyrightYear),
     confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
   };
+}
+
+function yearFromVision(value: unknown): number | undefined {
+  const year = typeof value === "number" ? value : Number(String(value ?? "").match(/\b((?:19|20)\d{2})\b/)?.[1]);
+  return isPlausibleTcgYear(year) ? year : undefined;
 }
 
 export function visionProvider(): "openai" | "gemini" | null {

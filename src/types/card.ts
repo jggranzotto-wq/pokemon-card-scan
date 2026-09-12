@@ -20,6 +20,8 @@ export type ExtractedCard = {
   grade?: string | null;
   confidence?: number;
   ocrText?: string;
+  /** Printed © year from the photo. Used only when official set year is missing. */
+  copyrightYear?: number | null;
 };
 
 export type PokemonCard = {
@@ -31,6 +33,8 @@ export type PokemonCard = {
   number: string;
   printedNumber: string;
   rarity?: string;
+  /** Official set release year from pokemontcg.io / TCGdex. Null if unknown. */
+  setYear?: number | null;
   artist?: string;
   language: CardLanguage;
   images: { small?: string; large?: string };
