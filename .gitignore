@@ -18,6 +18,10 @@
 # production
 /build
 
+# leftover Tesseract downloads in the repo root (shipped copies live in public/)
+/eng.traineddata
+/jpn.traineddata
+
 # misc
 .DS_Store
 *.pem

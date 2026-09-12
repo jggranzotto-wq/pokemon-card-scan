@@ -1,14 +1,29 @@
 type WorkerLike = {
   recognize: (image: Blob) => Promise<{ data: { text?: string } }>;
+  terminate: () => Promise<void>;
 };
 
-let workerPromise: Promise<WorkerLike> | null = null;
+const workers = new Map<string, Promise<WorkerLike>>();
 
-export function preloadOcr(): Promise<WorkerLike> {
-  if (!workerPromise) {
-    workerPromise = import("tesseract.js").then(async ({ createWorker }) => createWorker("eng"));
-  }
-  return workerPromise;
+function tesseractPaths() {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  return {
+    workerPath: `${origin}/tesseract/worker.min.js`,
+    corePath: `${origin}/tesseract/tesseract-core-simd-lstm.wasm.js`,
+    langPath: `${origin}/tessdata`,
+    gzip: false as const,
+    cacheMethod: "none" as const,
+  };
+}
+
+export function preloadOcr(lang: "eng" | "jpn" = "eng"): Promise<WorkerLike> {
+  const existing = workers.get(lang);
+  if (existing) return existing;
+  const started = import("tesseract.js").then(async ({ createWorker }) =>
+    createWorker(lang, 1, tesseractPaths()),
+  );
+  workers.set(lang, started);
+  return started;
 }
 
 async function bitmapFromBlob(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
@@ -55,9 +70,13 @@ export async function compressImage(file: Blob, maxEdge = 1800, quality = 0.86):
   return blob;
 }
 
-export async function readCardText(image: Blob, onProgress?: (status: string) => void): Promise<string> {
-  onProgress?.("Loading text reader…");
-  const worker = await preloadOcr();
+export async function readCardText(
+  image: Blob,
+  onProgress?: (status: string) => void,
+  lang: "eng" | "jpn" = "eng",
+): Promise<string> {
+  onProgress?.(lang === "jpn" ? "Reading Japanese text…" : "Loading text reader…");
+  const worker = await preloadOcr(lang);
   onProgress?.("Reading the card…");
   const { data } = await worker.recognize(image);
   return data.text ?? "";

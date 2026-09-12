@@ -13,7 +13,7 @@ import {
 } from "@/lib/ebay-app-id";
 import { formatCad, formatUsd } from "@/lib/money";
 import { CardIdentityPanel } from "@/components/CardIdentity";
-import { isPlausibleCardName, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
+import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
@@ -120,14 +120,33 @@ export function HomeApp() {
 
       if (data.message === "ocr-required") {
         setProgress("Reading the card on this phone…");
-        const text = await Promise.race([
-          readCardText(blob, (status) => {
-            if (scansRef.current.isCurrent(scan)) setProgress(status);
-          }),
-          new Promise<string>((_, reject) => {
-            setTimeout(() => reject(new Error(READ_FAIL_MESSAGE)), 25_000);
-          }),
-        ]);
+        const readWithTimeout = (lang: "eng" | "jpn") =>
+          Promise.race([
+            readCardText(
+              blob,
+              (status) => {
+                if (scansRef.current.isCurrent(scan)) setProgress(status);
+              },
+              lang,
+            ),
+            new Promise<string>((_, reject) => {
+              setTimeout(() => reject(new Error(READ_FAIL_MESSAGE)), 25_000);
+            }),
+          ]);
+        let text = await readWithTimeout("eng");
+        if (!isPlausibleCardName(parseOcrText(text).name)) {
+          try {
+            const japanese = await readWithTimeout("jpn");
+            if (
+              isPlausibleCardName(parseOcrText(japanese).name) ||
+              parseOcrText(japanese).language === "Japanese"
+            ) {
+              text = japanese;
+            }
+          } catch {
+            // Keep the English read; the server will reject garbage names.
+          }
+        }
         if (!scansRef.current.isCurrent(scan)) return;
         setProgress("Matching the card…");
         const ocrRes = await fetch("/api/identify", {
