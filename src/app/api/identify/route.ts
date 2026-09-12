@@ -138,6 +138,19 @@ export async function POST(request: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const mimeType = file.type || "image/jpeg";
+
+    // Tesseract workers hang on Vercel serverless until the 60s limit.
+    // The phone reads the photo instead, using language files from this origin.
+    if (process.env.VERCEL && !visionProvider()) {
+      return NextResponse.json({
+        method: "ocr",
+        extracted: {},
+        candidates: [],
+        visionAvailable: false,
+        message: "ocr-required",
+      } satisfies IdentifyResponse);
+    }
+
     return NextResponse.json(await identifyFromImageBytes(bytes, mimeType));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Identify failed";
