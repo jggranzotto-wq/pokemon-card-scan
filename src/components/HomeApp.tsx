@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { EbaySetup } from "@/components/EbaySetup";
 import { compressImage, preloadOcr, readCardText, SAMPLE_CARD } from "@/lib/client-image";
+import { clearEbayAppId, readEbayAppId, writeEbayAppId } from "@/lib/ebay-app-id";
 import { formatCad, formatUsd } from "@/lib/money";
+import { recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
 import type {
@@ -40,8 +43,16 @@ export function HomeApp() {
   const [selected, setSelected] = useState<PokemonCard | null>(null);
   const [solds, setSolds] = useState<SoldsResponse | null>(null);
   const [search, setSearch] = useState("");
+  const [ready, setReady] = useState(false);
+  const [appId, setAppId] = useState("");
+  const [showSetup, setShowSetup] = useState(true);
+  const [setupError, setSetupError] = useState<string | null>(null);
 
   useEffect(() => {
+    const saved = readEbayAppId();
+    setAppId(saved);
+    setShowSetup(!saved);
+    setReady(true);
     void fetch("/api/status")
       .then((res) => res.json())
       .then(setStatus)
@@ -56,12 +67,11 @@ export function HomeApp() {
   }, [preview]);
 
   const preferRaw = !extracted.isSlab;
+  const recognized = recognizedLabel(extracted, selected);
 
   const modeNote = useMemo(() => {
-    if (!status) return "Checking lookup options…";
-    const id = status.vision ? "Vision ID on" : "OCR + pokemontcg.io (no vision key)";
-    const sold = status.ebay ? "Live eBay solds" : "Example solds until EBAY_APP_ID is set";
-    return `${id} · ${sold}`;
+    const id = status?.vision ? "Vision ID on" : "OCR reads the card photo (not the filename)";
+    return `${id} · eBay solds use your App ID`;
   }, [status]);
 
   function beginScan() {
@@ -124,6 +134,7 @@ export function HomeApp() {
     const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
     if (auto) {
       setSelected(auto);
+      setProgress(`Recognized: ${recognizedLabel(extract, auto)} — searching eBay solds…`);
       await loadSolds(auto, extract, undefined, scan);
       return;
     }
@@ -131,6 +142,7 @@ export function HomeApp() {
     setPhase("candidates");
     setProgress("");
     if (!data.candidates?.length && extract.name) {
+      setProgress(`Recognized: ${recognizedLabel(extract)} — searching eBay solds…`);
       await loadSolds(null, extract, undefined, scan);
       return;
     }
@@ -146,17 +158,30 @@ export function HomeApp() {
     scan: number,
   ) {
     if (!scansRef.current.isCurrent(scan)) return;
+    if (!appId) {
+      setSetupError("Add your eBay App ID first.");
+      setShowSetup(true);
+      return;
+    }
     setPhase("working");
-    setProgress("Fetching sold prices…");
+    const label = recognizedLabel(extract, card);
+    setProgress(label ? `Recognized: ${label} — searching eBay solds…` : "Searching eBay solds…");
     const res = await fetch("/api/solds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
-      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride)),
+      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride, appId)),
     });
-    const data = (await res.json()) as SoldsResponse & { error?: string };
+    const data = (await res.json()) as SoldsResponse & { error?: string; code?: string };
     if (!scansRef.current.isCurrent(scan)) return;
-    if (!res.ok) throw new Error(data.error || "Could not load solds.");
+    if (!res.ok) {
+      if (data.code === "MISSING_APP_ID" || data.code === "INVALID_APP_ID") {
+        setSetupError(data.error || "eBay rejected that App ID.");
+        setShowSetup(true);
+        return;
+      }
+      throw new Error(data.error || "Could not load solds.");
+    }
     setSolds(data);
     setPhase("solds");
     setProgress("");
@@ -222,13 +247,61 @@ export function HomeApp() {
     }
   }
 
+  function saveAppId(next: string) {
+    writeEbayAppId(next);
+    setAppId(next);
+    setSetupError(null);
+    setShowSetup(false);
+  }
+
+  function clearAppId() {
+    clearEbayAppId();
+    setAppId("");
+    setSetupError(null);
+    setShowSetup(true);
+  }
+
+  if (!ready) {
+    return (
+      <main className="mx-auto grid min-h-dvh max-w-phone place-items-center px-4">
+        <p className="text-sm text-paper-mute">Loading…</p>
+      </main>
+    );
+  }
+
+  if (showSetup) {
+    return (
+      <EbaySetup
+        initialValue={appId}
+        error={setupError}
+        onSave={saveAppId}
+        onCancel={appId ? () => setShowSetup(false) : undefined}
+      />
+    );
+  }
+
   return (
     <main className="mx-auto min-h-dvh max-w-phone px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))]">
       <header className="mb-5">
-        <p className="text-xs uppercase tracking-[0.2em] text-bolt">the midnightman</p>
-        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Card Scan</h1>
-        <p className="mt-1 text-sm text-paper-mute">
-          Photo a Pokémon card. We ID it, then show recent eBay solds in USD and approx CAD.
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.2em] text-bolt">the midnightman</p>
+            <h1 className="mt-1 text-3xl font-semibold tracking-tight">Card Scan</h1>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSetupError(null);
+              setShowSetup(true);
+            }}
+            className="grid h-12 w-12 place-items-center rounded-2xl bg-ink-card text-lg ring-1 ring-ink-line"
+            aria-label="eBay App ID settings"
+          >
+            ⚙
+          </button>
+        </div>
+        <p className="mt-2 text-sm text-paper-mute">
+          Photo a Pokémon card. We read the name and number from the image, then search eBay solds.
         </p>
         <p className="mt-2 text-xs text-paper-mute">{modeNote}</p>
       </header>
@@ -317,14 +390,15 @@ export function HomeApp() {
         <p className="mt-4 rounded-2xl bg-coral/15 px-4 py-3 text-sm text-coral">{error}</p>
       ) : null}
 
-      {extracted.name || extracted.collectorNumber ? (
-        <p className="mt-4 text-sm text-paper-mute">
-          Read as {extracted.name ?? "unknown"}
-          {extracted.set ? ` · ${extracted.set}` : ""}
-          {extracted.collectorNumber ? ` · ${extracted.collectorNumber}${extracted.printedTotal ? `/${extracted.printedTotal}` : ""}` : ""}
-          {extracted.variant && extracted.variant !== "unknown" ? ` · ${extracted.variant}` : ""}
-          {extracted.language ? ` · ${extracted.language}` : ""}
-          {extracted.isSlab ? " · slab" : " · treating as raw"}
+      {recognized ? (
+        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-base font-semibold ring-1 ring-ink-line">
+          Recognized: {recognized}
+          <span className="mt-1 block text-sm font-normal text-paper-mute">
+            {extracted.set ? `${extracted.set}` : selected?.setName ?? ""}
+            {extracted.variant && extracted.variant !== "unknown" ? ` · ${extracted.variant}` : ""}
+            {extracted.language ? ` · ${extracted.language}` : ""}
+            {extracted.isSlab ? " · slab" : " · treating as raw"}
+          </span>
         </p>
       ) : null}
 
@@ -439,6 +513,11 @@ export function HomeApp() {
           <h3 className="mb-2 mt-5 text-sm font-semibold uppercase tracking-wide text-paper-mute">
             Recent solds
           </h3>
+          {solds.sales.length === 0 ? (
+            <p className="rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper-mute ring-1 ring-ink-line">
+              No sold listings came back for this name and number. Use the eBay sold search link.
+            </p>
+          ) : null}
           <ul className="grid gap-2">
             {solds.sales.map((sale) => {
               const inner = (
@@ -473,6 +552,16 @@ export function HomeApp() {
           </ul>
         </section>
       ) : null}
+
+      <p className="mt-8 text-center text-xs text-paper-mute">
+        <button type="button" onClick={() => setShowSetup(true)} className="underline-offset-4 hover:underline">
+          Change eBay App ID
+        </button>
+        {" · "}
+        <button type="button" onClick={clearAppId} className="underline-offset-4 hover:underline">
+          Clear App ID
+        </button>
+      </p>
     </main>
   );
 }
