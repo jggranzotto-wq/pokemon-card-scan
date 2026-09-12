@@ -22,6 +22,16 @@ export type ExtractedCard = {
   ocrText?: string;
   /** Printed © year from the photo. Used only when official set year is missing. */
   copyrightYear?: number | null;
+  /** Official set release year chosen on the manual identify form. */
+  setYear?: number | null;
+  /** Official catalog set id (e.g. base1) from the set dropdown. */
+  setId?: string;
+};
+
+export type CatalogSet = {
+  id: string;
+  name: string;
+  year: number | null;
 };
 
 export type PokemonCard = {

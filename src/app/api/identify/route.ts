@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { noManualMatchMessage } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { lookupCards } from "@/lib/pokemon-tcg";
 import { ocrCardImage } from "@/lib/server-ocr";
@@ -51,6 +52,7 @@ async function identifyFromExtracted(
       (top.printedNumber.endsWith(`/${extracted.printedTotal}`) ||
         top.setId.toLowerCase() === extracted.printedTotal.toLowerCase()));
   const nameOk = !extracted.name || (top && top.name.toLowerCase() === extracted.name.toLowerCase());
+  const uniquePrinting = candidates.length === 1;
   const confident = Boolean(
     top &&
     (extracted.confidence ?? 0) >= 0.55 &&
@@ -59,17 +61,26 @@ async function identifyFromExtracted(
     totalOk &&
     topScoreGap,
   );
+  const manual = (extracted.confidence ?? 0) >= 0.9;
 
   return {
     method,
     extracted,
     candidates,
-    autoSelectedId: confident ? top.id : undefined,
+    autoSelectedId: uniquePrinting && top ? top.id : confident && !manual ? top.id : undefined,
     visionAvailable: Boolean(visionProvider()),
     message: candidates.length
-      ? undefined
+      ? candidates.length > 1
+        ? "Several printings match. Tap the number, set, and rarity on your card."
+        : undefined
       : extracted.name
-        ? "No catalog match for that name. You can still use the printed name."
+        ? extracted.set || extracted.setYear
+          ? noManualMatchMessage({
+              name: extracted.name,
+              year: extracted.setYear,
+              setName: extracted.set,
+            })
+          : "No catalog match for that name. You can still use the printed name."
         : READ_FAIL_MESSAGE,
   };
 }

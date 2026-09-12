@@ -1,4 +1,5 @@
-import type { CardLanguage, ExtractedCard, PokemonCard } from "../types/card";
+import type { CardLanguage, CatalogSet, ExtractedCard, PokemonCard } from "../types/card";
+import { preferDisplaySetName } from "./catalog";
 import { yearFromReleaseDate } from "./card-year";
 import { englishNameFromJapanese, inferSetFromText, japaneseNameForEnglish } from "./ocr-parse";
 
@@ -170,6 +171,7 @@ function pokemonTcgHeaders(): HeadersInit {
 let setCache: { names: string[]; byId: Record<string, TcgdexSet>; at: number } | null = null;
 const setYearById = new Map<string, number>();
 let setYearsAt = 0;
+let catalogCache: { sets: CatalogSet[]; at: number } | null = null;
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -225,19 +227,69 @@ function rememberSetYear(setId: string | undefined, releaseDate?: string | null)
   if (year) setYearById.set(setId, year);
 }
 
-async function ensureSetYears(): Promise<void> {
-  if (setYearById.size && Date.now() - setYearsAt < 24 * 60 * 60 * 1000) return;
-
+async function fetchPokemonTcgSets(): Promise<Array<{ id: string; name: string; releaseDate?: string }>> {
+  const rows: Array<{ id: string; name: string; releaseDate?: string }> = [];
   for (let page = 1; page <= 4; page += 1) {
     const pokemon = await fetchJson<ApiList<{ id: string; name: string; releaseDate?: string }>>(
       `${POKEMONTCG}/sets?pageSize=250&page=${page}`,
       { headers: pokemonTcgHeaders() },
     );
-    const rows = pokemon?.data ?? [];
-    for (const set of rows) rememberSetYear(set.id, set.releaseDate);
-    if (rows.length < 250) break;
+    const pageRows = pokemon?.data ?? [];
+    rows.push(...pageRows);
+    if (pageRows.length < 250) break;
   }
+  if (rows.length) return rows;
+
+  const dump = await fetchJson<Array<{ id: string; name: string; releaseDate?: string }>>(
+    "https://raw.githubusercontent.com/PokemonTCG/pokemon-tcg-data/master/sets/en.json",
+  );
+  return dump ?? [];
+}
+
+async function ensureSetYears(): Promise<void> {
+  if (setYearById.size && Date.now() - setYearsAt < 24 * 60 * 60 * 1000) return;
+  const rows = await fetchPokemonTcgSets();
+  for (const set of rows) rememberSetYear(set.id, set.releaseDate);
   setYearsAt = Date.now();
+}
+
+export async function listCatalogSets(): Promise<CatalogSet[]> {
+  if (catalogCache && Date.now() - catalogCache.at < 24 * 60 * 60 * 1000) {
+    return catalogCache.sets;
+  }
+
+  await listSetNames();
+  const [ptcgSets, enSets] = await Promise.all([fetchPokemonTcgSets(), fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`)]);
+  const tcgdexById = new Map((enSets ?? []).map((set) => [set.id, set]));
+  const seen = new Set<string>();
+  const sets: CatalogSet[] = [];
+
+  const add = (id: string, name: string, releaseDate?: string | null) => {
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    rememberSetYear(id, releaseDate);
+    const year = yearFromReleaseDate(releaseDate) ?? setYearById.get(id) ?? null;
+    sets.push({ id, name, year });
+  };
+
+  for (const set of ptcgSets) {
+    const tcgdex = tcgdexById.get(set.id);
+    add(set.id, preferDisplaySetName(set.name, tcgdex?.name || setCache?.byId[set.id]?.name), set.releaseDate);
+  }
+  for (const set of enSets ?? []) {
+    add(set.id, set.name, set.releaseDate);
+  }
+
+  catalogCache = { sets, at: Date.now() };
+  return sets;
+}
+
+export async function suggestCatalogNames(query: string): Promise<string[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+  const list = await fetchJson<TcgdexListCard[]>(`${TCGDEX}/en/cards?name=${encodeURIComponent(q)}`);
+  const names = Array.from(new Set((list ?? []).map((card) => catalogName(card.name)).filter(Boolean)));
+  return names.slice(0, 20);
 }
 
 async function resolveSetYear(setId: string): Promise<number | null> {
@@ -463,6 +515,9 @@ export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard
   if (name && number) {
     queries.push(`name:"${escapeLucene(name)}" number:"${escapeLucene(number)}"`);
   }
+  if (name && extracted.setId) {
+    queries.push(`name:"${escapeLucene(name)}" set.id:${escapeLucene(extracted.setId)}`);
+  }
   if (name && inferredSet) {
     queries.push(`name:"${escapeLucene(name)}" set.name:"${escapeLucene(inferredSet)}"`);
   }
@@ -486,8 +541,11 @@ export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard
   }
   add(await searchTcgdex(extracted));
 
-  const ranked = rankCandidates(out, extracted).slice(0, 8);
-  return hydrateCards(ranked);
+  const hydrated = await hydrateCards(rankCandidates(out, extracted).slice(0, 16));
+  const year = extracted.setYear;
+  const yearMatches = typeof year === "number" ? hydrated.filter((card) => card.setYear === year) : hydrated;
+  const pool = yearMatches.length ? yearMatches : hydrated;
+  return rankCandidates(pool, extracted).slice(0, 8);
 }
 
 async function hydrateCards(cards: PokemonCard[]): Promise<PokemonCard[]> {
@@ -527,6 +585,8 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
   const wantName = extracted.name?.toLowerCase();
   const wantNumber = extracted.collectorNumber?.replace(/^0+/, "");
   const wantSet = extracted.set?.toLowerCase();
+  const wantSetId = extracted.setId?.toLowerCase();
+  const wantYear = extracted.setYear;
 
   return [...cards].sort((a, b) => score(b) - score(a));
 
@@ -535,9 +595,11 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
     if (wantName && card.name.toLowerCase() === wantName) s += 8;
     else if (wantName && card.name.toLowerCase().includes(wantName)) s += 4;
     if (wantNumber && card.number.replace(/^0+/, "") === wantNumber) s += 7;
+    if (wantSetId && card.setId.toLowerCase() === wantSetId) s += 10;
     if (wantSet && card.setName.toLowerCase() === wantSet) s += 8;
     else if (wantSet && card.setId.toLowerCase() === wantSet) s += 8;
     else if (wantSet && card.setName.toLowerCase().includes(wantSet)) s += 2;
+    if (wantYear && card.setYear === wantYear) s += 6;
     if (extracted.printedTotal && card.printedNumber.endsWith(`/${extracted.printedTotal}`)) s += 6;
     if (extracted.language && card.language === extracted.language) s += 1;
     if (extracted.variant && extracted.variant !== "unknown") {
