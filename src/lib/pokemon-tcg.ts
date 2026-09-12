@@ -309,7 +309,9 @@ function isPromoSetId(setId?: string): boolean {
 }
 
 function printedSetName(setId: string, fallback?: string): string {
-  return setCache?.byId[setId]?.name || fallback || setId;
+  const tcgdexName =
+    setCache?.byId[setId]?.name || catalogCache?.sets.find((set) => set.id === setId)?.name;
+  return preferDisplaySetName(fallback || setId, tcgdexName);
 }
 
 function yearForSet(setId: string, releaseDate?: string | null): number | null {
