@@ -18,6 +18,14 @@ function moneyPair(amountUsd: number, rate: number): string {
   return `${formatUsd(amountUsd)} · ${formatCad(amountUsd, rate)}`;
 }
 
+function formatUpdatedAt(value?: string): string | null {
+  if (!value) return null;
+  const normalized = value.includes("T") ? value : value.replace(/\//g, "-");
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en-CA", { dateStyle: "medium" }).format(date);
+}
+
 function printingLabel(printing?: string): string | null {
   if (!printing) return null;
   if (printing === "holofoil") return "Holofoil";
@@ -90,8 +98,8 @@ export function CompsPanel({
               </div>
             ) : null}
           </dl>
-          {market?.updatedAt ? (
-            <p className="mt-2 text-xs text-paper-mute">Updated {market.updatedAt}</p>
+          {formatUpdatedAt(market?.updatedAt) ? (
+            <p className="mt-2 text-xs text-paper-mute">Updated {formatUpdatedAt(market?.updatedAt)}</p>
           ) : null}
         </article>
       ) : null}
