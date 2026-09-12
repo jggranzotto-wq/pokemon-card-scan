@@ -1,0 +1,40 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b1020;
+  color: #f4f6fb;
+  font-family:
+    "Sora",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    sans-serif;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: #ffcb05;
+  color: #0b1020;
+}
+
+.safe-bottom {
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+}
