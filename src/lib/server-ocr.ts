@@ -8,7 +8,7 @@ async function workerFor(lang: Lang): Promise<Worker> {
   const existing = workers.get(lang);
   if (existing) return existing;
 
-  const started = createWorker(lang, 1).then(async (worker) => {
+  const started = createWorker(lang, 1, { cachePath: "/tmp" }).then(async (worker) => {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
     return worker;
   });
