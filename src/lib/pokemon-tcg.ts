@@ -153,9 +153,9 @@ type TcgdexCard = TcgdexListCard & {
   pricing?: {
     tcgplayer?: {
       updated?: string;
-      holofoil?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
-      normal?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
-      reverseHolofoil?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
+      holofoil?: { marketPrice?: number; lowPrice?: number; midPrice?: number; highPrice?: number };
+      normal?: { marketPrice?: number; lowPrice?: number; midPrice?: number; highPrice?: number };
+      reverseHolofoil?: { marketPrice?: number; lowPrice?: number; midPrice?: number; highPrice?: number };
     };
   };
 };
@@ -265,19 +265,44 @@ function yearForSet(setId: string, releaseDate?: string | null): number | null {
   return yearFromReleaseDate(releaseDate) ?? setYearById.get(setId) ?? null;
 }
 
+const TCGPLAYER_PRINT_ORDER = [
+  "holofoil",
+  "1stEditionHolofoil",
+  "unlimitedHolofoil",
+  "reverseHolofoil",
+  "normal",
+];
+
+function hasUsdPrice(row?: { low?: number; mid?: number; high?: number; market?: number } | null): boolean {
+  if (!row) return false;
+  return [row.low, row.mid, row.high, row.market].some((n) => typeof n === "number" && n > 0);
+}
+
+function pickTcgplayerRow(
+  prices: Record<string, { low?: number; mid?: number; high?: number; market?: number }>,
+): { key: string; row: { low?: number; mid?: number; high?: number; market?: number } } | null {
+  for (const key of TCGPLAYER_PRINT_ORDER) {
+    const row = prices[key];
+    if (hasUsdPrice(row)) return { key, row };
+  }
+  for (const [key, row] of Object.entries(prices)) {
+    if (hasUsdPrice(row)) return { key, row };
+  }
+  return null;
+}
+
 function tcgplayerSummary(card: ApiCard): PokemonCard["tcgplayer"] {
   const prices = card.tcgplayer?.prices;
-  if (!prices) return card.tcgplayer?.url ? { url: card.tcgplayer.url } : undefined;
-  const rows = Object.values(prices);
-  const markets = rows.map((p) => p.market).filter((n): n is number => typeof n === "number");
-  const lows = rows.map((p) => p.low).filter((n): n is number => typeof n === "number");
-  const highs = rows.map((p) => p.high).filter((n): n is number => typeof n === "number");
+  const picked = prices ? pickTcgplayerRow(prices) : null;
+  if (!picked && !card.tcgplayer?.url) return undefined;
   return {
     url: card.tcgplayer?.url,
     updatedAt: card.tcgplayer?.updatedAt,
-    marketUsd: markets.length ? Math.min(...markets) : undefined,
-    lowUsd: lows.length ? Math.min(...lows) : undefined,
-    highUsd: highs.length ? Math.max(...highs) : undefined,
+    printing: picked?.key,
+    marketUsd: picked?.row.market,
+    lowUsd: picked?.row.low,
+    midUsd: picked?.row.mid,
+    highUsd: picked?.row.high,
   };
 }
 
@@ -342,10 +367,18 @@ function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard
   if (detail?.variants?.holo) extras.push("holo");
   if (detail?.variants?.reverse) extras.push("reverse");
   const prices = detail?.pricing?.tcgplayer;
-  const market =
-    prices?.holofoil?.marketPrice ?? prices?.reverseHolofoil?.marketPrice ?? prices?.normal?.marketPrice;
-  const low = prices?.holofoil?.lowPrice ?? prices?.normal?.lowPrice;
-  const high = prices?.holofoil?.highPrice ?? prices?.normal?.highPrice;
+  const printRow = prices?.holofoil ?? prices?.reverseHolofoil ?? prices?.normal;
+  const printing = prices?.holofoil
+    ? "holofoil"
+    : prices?.reverseHolofoil
+      ? "reverseHolofoil"
+      : prices?.normal
+        ? "normal"
+        : undefined;
+  const market = printRow?.marketPrice;
+  const low = printRow?.lowPrice;
+  const mid = printRow?.midPrice;
+  const high = printRow?.highPrice;
   const printedNumber = isPromoSetId(setId)
     ? `${card.localId}/${setId}`
     : printedTotal
@@ -365,11 +398,13 @@ function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard
     images: tcgdexImages(card.image ?? detail?.image),
     variantHints: variantHintsFromRarity(detail?.rarity, extras),
     tcgplayer:
-      market || low
+      market || low || mid
         ? {
             updatedAt: prices?.updated,
+            printing,
             marketUsd: market,
             lowUsd: low,
+            midUsd: mid,
             highUsd: high,
           }
         : undefined,

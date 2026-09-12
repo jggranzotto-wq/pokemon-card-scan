@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { EbayAppIdError, fetchEbaySolds } from "@/lib/ebay";
 import { normalizeEbayAppId } from "@/lib/ebay-app-id";
 import { usdCadRate } from "@/lib/fx";
-import { getCardById } from "@/lib/pokemon-tcg";
-import { ebaySoldSearchUrl, soldsQuery, summarizeSolds } from "@/lib/solds-summary";
-import type { SoldsResponse } from "@/types/card";
+import { fetchPublicComps } from "@/lib/public-comps";
+import { buildSoldsResponse } from "@/lib/solds-response";
+import { soldsQuery } from "@/lib/solds-summary";
+import type { EbaySoldsStatus, SoldListing } from "@/types/card";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,58 +24,66 @@ export async function POST(request: Request) {
       ebayAppId?: string;
     };
 
-    const ebayAppId = normalizeEbayAppId(body.ebayAppId);
-    if (!ebayAppId) {
-      return NextResponse.json(
-        { error: "Add your eBay App ID first.", code: "MISSING_APP_ID" },
-        { status: 400 },
-      );
-    }
+    const name = (body.name || "").trim();
+    const publicComps = await fetchPublicComps({
+      cardId: body.cardId,
+      name: name || "",
+      setName: body.setName,
+      number: body.number,
+      printedNumber: body.printedNumber,
+      language: body.language,
+    });
 
-    const card = body.cardId ? await getCardById(body.cardId) : null;
-    const name = (body.name || card?.name || "").trim();
-    if (!name) {
-      return NextResponse.json({ error: "Need a card name to search solds." }, { status: 400 });
+    const resolvedName = (name || publicComps.card?.name || "").trim();
+    if (!resolvedName) {
+      return NextResponse.json({ error: "Need a card name to search comps." }, { status: 400 });
     }
 
     const query = soldsQuery({
-      name,
-      setName: body.setName || card?.setName,
-      number: body.number || card?.number,
-      printedNumber: body.printedNumber || card?.printedNumber,
+      name: resolvedName,
+      setName: body.setName || publicComps.card?.setName,
+      number: body.number || publicComps.card?.number,
+      printedNumber: body.printedNumber || publicComps.card?.printedNumber,
       variant: body.variant,
-      language: body.language || card?.language,
+      language: body.language || publicComps.card?.language,
     });
 
     const fx = await usdCadRate();
-    const sales = await fetchEbaySolds(query, ebayAppId);
     const preferRaw = body.preferRaw !== false;
-    const summary = summarizeSolds(sales);
-    const typical = preferRaw && summary.raw ? summary.raw : summary.typical;
+    const ebayAppId = normalizeEbayAppId(body.ebayAppId);
 
-    const response: SoldsResponse = {
-      source: "ebay",
-      sourceLabel: sales.length
-        ? "eBay sold listings (Finding API)"
-        : "eBay solds — no matching sold listings",
-      demo: false,
-      usdCadRate: fx.rate,
-      rateLabel: fx.label,
-      query,
-      ebaySearchUrl: ebaySoldSearchUrl(query),
-      sales,
-      raw: summary.raw,
-      graded: summary.graded,
-      typical,
-      tcgplayer: card?.tcgplayer,
-    };
+    let sales: SoldListing[] = [];
+    let ebayStatus: EbaySoldsStatus = "skipped";
+    let ebayError: string | undefined;
 
-    return NextResponse.json(response);
-  } catch (error) {
-    if (error instanceof EbayAppIdError) {
-      return NextResponse.json({ error: error.message, code: error.code }, { status: 401 });
+    if (ebayAppId) {
+      try {
+        sales = await fetchEbaySolds(query, ebayAppId);
+        ebayStatus = sales.length ? "ok" : "none";
+      } catch (error) {
+        if (error instanceof EbayAppIdError) {
+          ebayStatus = "invalid";
+          ebayError = error.message;
+        } else {
+          ebayStatus = "error";
+          ebayError = error instanceof Error ? error.message : "eBay solds could not load.";
+        }
+      }
     }
-    const message = error instanceof Error ? error.message : "Solds lookup failed";
+
+    return NextResponse.json(
+      buildSoldsResponse({
+        query,
+        fx,
+        sales,
+        publicComps,
+        preferRaw,
+        ebayStatus,
+        ebayError,
+      }),
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Comps lookup failed";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

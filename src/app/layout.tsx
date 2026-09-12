@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Pokémon Card Scan",
-  description: "Take a photo of a Pokémon card and see recent eBay sold prices.",
+  description: "Take a photo of a Pokémon card and see public market comparables.",
   applicationName: "Card Scan",
   appleWebApp: {
     capable: true,
