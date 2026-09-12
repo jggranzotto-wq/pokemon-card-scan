@@ -52,7 +52,12 @@ export function buildSoldsResponse(input: {
   return {
     source,
     sourceLabel,
-    sourceUrl: tcgplayer?.url || input.publicComps.sourceUrl,
+    sourceUrl:
+      tcgplayer?.url ||
+      input.publicComps.sourceUrl ||
+      (input.publicComps.card?.id
+        ? `https://prices.pokemontcg.io/tcgplayer/${input.publicComps.card.id}`
+        : undefined),
     priceChartingUrl: priceChartingSearchUrl(input.query),
     demo: false,
     usdCadRate: input.fx.rate,
