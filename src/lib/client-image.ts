@@ -1,6 +1,5 @@
 type WorkerLike = {
   recognize: (image: Blob) => Promise<{ data: { text?: string } }>;
-  terminate: () => Promise<void>;
 };
 
 const workers = new Map<string, Promise<WorkerLike>>();
