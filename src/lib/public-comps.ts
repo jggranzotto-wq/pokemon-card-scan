@@ -73,7 +73,12 @@ export async function fetchPublicComps(input: {
       if (fresh) card = fresh;
     }
 
-    const tcgplayer = card?.tcgplayer;
+    const tcgplayer = card?.tcgplayer
+      ? {
+          ...card.tcgplayer,
+          url: card.tcgplayer.url || `https://prices.pokemontcg.io/tcgplayer/${card.id}`,
+        }
+      : undefined;
     if (hasPublicMarket(tcgplayer)) {
       return {
         found: true,

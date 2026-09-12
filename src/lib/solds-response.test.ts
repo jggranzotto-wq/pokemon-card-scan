@@ -75,6 +75,34 @@ describe("buildSoldsResponse", () => {
     assert.equal(res.message, undefined);
   });
 
+  it("builds a TCGPlayer link from the catalog id when the API omits a url", () => {
+    const res = buildSoldsResponse({
+      query: "Charizard 4/102 Pokemon Base Set",
+      fx,
+      sales: [],
+      publicComps: {
+        found: true,
+        card: {
+          id: "base1-4",
+          name: "Charizard",
+          setName: "Base Set",
+          setId: "base1",
+          number: "4",
+          printedNumber: "4/102",
+          language: "English",
+          images: {},
+          variantHints: [],
+          tcgplayer: { marketUsd: 869.02, lowUsd: 449.99, midUsd: 902.5, highUsd: 3499.1 },
+        },
+        tcgplayer: { marketUsd: 869.02, lowUsd: 449.99, midUsd: 902.5, highUsd: 3499.1 },
+        sourceLabel: "TCGPlayer market via pokemontcg.io",
+      },
+      preferRaw: true,
+      ebayStatus: "skipped",
+    });
+    assert.equal(res.sourceUrl, "https://prices.pokemontcg.io/tcgplayer/base1-4");
+  });
+
   it("says so clearly when there are no public comps", () => {
     const res = buildSoldsResponse({
       query: "Sky Legend GX Pokemon",
