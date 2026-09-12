@@ -1,3 +1,16 @@
+type WorkerLike = {
+  recognize: (image: Blob) => Promise<{ data: { text?: string } }>;
+};
+
+let workerPromise: Promise<WorkerLike> | null = null;
+
+export function preloadOcr(): Promise<WorkerLike> {
+  if (!workerPromise) {
+    workerPromise = import("tesseract.js").then(async ({ createWorker }) => createWorker("eng"));
+  }
+  return workerPromise;
+}
+
 export async function compressImage(file: Blob, maxEdge = 1600, quality = 0.82): Promise<Blob> {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
@@ -19,16 +32,11 @@ export async function compressImage(file: Blob, maxEdge = 1600, quality = 0.82):
 }
 
 export async function readCardText(image: Blob, onProgress?: (status: string) => void): Promise<string> {
-  const { createWorker } = await import("tesseract.js");
   onProgress?.("Loading text reader…");
-  const worker = await createWorker("eng");
-  try {
-    onProgress?.("Reading the card…");
-    const { data } = await worker.recognize(image);
-    return data.text ?? "";
-  } finally {
-    await worker.terminate();
-  }
+  const worker = await preloadOcr();
+  onProgress?.("Reading the card…");
+  const { data } = await worker.recognize(image);
+  return data.text ?? "";
 }
 
 export const SAMPLE_CARD = {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { compressImage, readCardText, SAMPLE_CARD } from "@/lib/client-image";
+import { compressImage, preloadOcr, readCardText, SAMPLE_CARD } from "@/lib/client-image";
 import { formatCad, formatUsd } from "@/lib/money";
 import type {
   ExtractedCard,
@@ -43,6 +43,7 @@ export function HomeApp() {
       .then((res) => res.json())
       .then(setStatus)
       .catch(() => setStatus(null));
+    void preloadOcr();
   }, []);
 
   useEffect(() => {
@@ -251,14 +252,22 @@ export function HomeApp() {
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(event) => void onFile(event.target.files?.[0])}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          void onFile(file);
+        }}
       />
       <input
         ref={galleryRef}
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={(event) => void onFile(event.target.files?.[0])}
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          void onFile(file);
+        }}
       />
 
       <form onSubmit={(event) => void onManualSearch(event)} className="mt-5 flex gap-2">
@@ -361,7 +370,6 @@ export function HomeApp() {
               solds.demo ? "bg-bolt/15 text-bolt" : "bg-mint/15 text-mint"
             }`}
           >
-            {solds.demo ? "Example data — not live solds. " : null}
             {solds.sourceLabel}. {solds.rateLabel}.
           </div>
 

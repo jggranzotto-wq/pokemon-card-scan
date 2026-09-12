@@ -1,17 +1,16 @@
-export function formatUsd(amount: number): string {
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: "USD",
+function money(amount: number, prefix: string): string {
+  return `${prefix}${amount.toLocaleString("en-CA", {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(amount);
+  })}`;
+}
+
+export function formatUsd(amount: number): string {
+  return money(amount, "US$");
 }
 
 export function formatCad(amountUsd: number, rate: number): string {
-  return new Intl.NumberFormat("en-CA", {
-    style: "currency",
-    currency: "CAD",
-    maximumFractionDigits: 2,
-  }).format(amountUsd * rate);
+  return money(amountUsd * rate, "CA$");
 }
 
 export function parseMoney(value: string | number | undefined): number | null {
