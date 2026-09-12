@@ -3,6 +3,11 @@ import { describe, it } from "node:test";
 import { isPlausibleCardName, parseOcrText } from "./ocr-parse";
 
 describe("parseOcrText", () => {
+  it("prefers Charizard over Evolves from Charmeleon", () => {
+    const parsed = parseOcrText("Evolves from Charmeleon\nPut Charizard on the Stage 1 card\nCharizard\n4/102");
+    assert.equal(parsed.name, "Charizard");
+  });
+
   it("pulls name and 4/102 from messy OCR", () => {
     const parsed = parseOcrText("BASIC\nCharizard\nHP 120\nFire Spin\n4/102\nIllustrated by Mitsuhiro Arita");
     assert.equal(parsed.name, "Charizard");

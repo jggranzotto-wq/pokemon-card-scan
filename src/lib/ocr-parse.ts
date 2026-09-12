@@ -7,7 +7,7 @@ import type { CardLanguage, CardVariant, ExtractedCard } from "../types/card";
 export const READ_FAIL_MESSAGE = "Couldn't read this card — try a flatter, brighter photo";
 
 const SKIP_LINE =
-  /^(basic|stage\s*[12]|hp|pokemon|pokémon|trainer|energy|weakness|resistance|retreat|ability|poke-power|poke-body|item|supporter|stadium|illustrator|illustrated|copyright|nintendo|creatures|game freak|the pok[eé]mon company|lv\.|level up|弱点|抵抗力|にげる|特性|ワザ)$/i;
+  /^(basic|stage\s*[12]|hp|pokemon|pokémon|trainer|energy|weakness|resistance|retreat|ability|poke-power|poke-body|item|supporter|stadium|illustrator|illustrated|copyright|nintendo|creatures|game freak|the pok[eé]mon company|lv\.|level up|evolves from.*|弱点|抵抗力|にげる|特性|ワザ)$/i;
 
 const JA_NAMES = Object.keys(JA_TO_EN).sort((a, b) => b.length - a.length);
 
@@ -46,8 +46,11 @@ function bestPokemonName(haystack: string): { name: string; score: number } | nu
   for (const name of POKEMON_NAMES) {
     const n = normalize(name);
     if (!n) continue;
-    if (text.includes(n)) {
-      const score = 1 + n.length / 40;
+    const idx = text.indexOf(n);
+    if (idx >= 0) {
+      const evolveFrom = text.match(/evolves from\s+([a-z']+)/);
+      if (evolveFrom && evolveFrom[1] === n) continue;
+      const score = 1.2 + n.length / 40 - idx / 800;
       if (!best || score > best.score) best = { name, score };
       continue;
     }

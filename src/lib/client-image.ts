@@ -45,7 +45,6 @@ export async function compressImage(file: Blob, maxEdge = 1800, quality = 0.86):
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Could not read that photo.");
-  ctx.filter = "contrast(1.12) saturate(0.9)";
   ctx.drawImage(source, 0, 0, width, height);
   if ("close" in source && typeof source.close === "function") source.close();
 
