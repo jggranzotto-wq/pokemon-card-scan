@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { parseOcrText } from "@/lib/ocr-parse";
+import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { lookupCards } from "@/lib/pokemon-tcg";
+import { ocrCardImage } from "@/lib/server-ocr";
 import { identifyWithVision, visionProvider } from "@/lib/vision";
 import type { ExtractedCard, IdentifyResponse } from "@/types/card";
 
@@ -16,11 +17,28 @@ function mergeExtracted(base: ExtractedCard, extra?: ExtractedCard): ExtractedCa
   };
 }
 
+function unreadResponse(ocrText?: string): IdentifyResponse {
+  return {
+    method: "ocr",
+    extracted: { ocrText, language: undefined },
+    candidates: [],
+    visionAvailable: Boolean(visionProvider()),
+    message: READ_FAIL_MESSAGE,
+  };
+}
+
 async function identifyFromExtracted(
   extracted: ExtractedCard,
   method: IdentifyResponse["method"],
 ): Promise<IdentifyResponse> {
-  const candidates = await lookupCards(extracted);
+  if (!isPlausibleCardName(extracted.name) && !extracted.collectorNumber) {
+    return unreadResponse(extracted.ocrText);
+  }
+  if (!isPlausibleCardName(extracted.name)) {
+    extracted = { ...extracted, name: undefined };
+  }
+
+  const candidates = extracted.name ? await lookupCards(extracted) : [];
   const top = candidates[0];
   const second = candidates[1];
   const topScoreGap = top && second ? top.name !== second.name || top.printedNumber !== second.printedNumber : true;
@@ -29,7 +47,9 @@ async function identifyFromExtracted(
     (top && top.number.replace(/^0+/, "") === extracted.collectorNumber.replace(/^0+/, ""));
   const totalOk =
     !extracted.printedTotal ||
-    (top && top.printedNumber.endsWith(`/${extracted.printedTotal}`));
+    (top &&
+      (top.printedNumber.endsWith(`/${extracted.printedTotal}`) ||
+        top.setId.toLowerCase() === extracted.printedTotal.toLowerCase()));
   const nameOk = !extracted.name || (top && top.name.toLowerCase() === extracted.name.toLowerCase());
   const confident = Boolean(
     top &&
@@ -49,9 +69,40 @@ async function identifyFromExtracted(
     message: candidates.length
       ? undefined
       : extracted.name
-        ? "No catalog match. You can still load solds for this name."
-        : "No match. Search by name or try another photo.",
+        ? "No catalog match for that name. You can still use the printed name."
+        : READ_FAIL_MESSAGE,
   };
+}
+
+async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<IdentifyResponse> {
+  if (visionProvider()) {
+    try {
+      const vision = await identifyWithVision(bytes, mimeType);
+      if (isPlausibleCardName(vision?.name)) {
+        return identifyFromExtracted(vision!, "vision");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Vision failed";
+      return {
+        method: "vision",
+        extracted: {},
+        candidates: [],
+        visionAvailable: true,
+        message,
+      };
+    }
+  }
+
+  const englishText = await ocrCardImage(bytes, "eng");
+  let extracted = parseOcrText(englishText);
+  if (!isPlausibleCardName(extracted.name)) {
+    const japaneseText = await ocrCardImage(bytes, "jpn");
+    const japanese = parseOcrText(japaneseText);
+    if (isPlausibleCardName(japanese.name) || japanese.language === "Japanese") {
+      extracted = japanese;
+    }
+  }
+  return identifyFromExtracted(extracted, "ocr");
 }
 
 export async function POST(request: Request) {
@@ -64,6 +115,9 @@ export async function POST(request: Request) {
       const extracted = mergeExtracted(fromText, body.extracted);
       if (!extracted.name && !extracted.collectorNumber && !extracted.ocrText && !body.text) {
         return NextResponse.json({ error: "Send card text or a name." }, { status: 400 });
+      }
+      if (body.extracted?.name && !extracted.name) {
+        extracted.name = isPlausibleCardName(body.extracted.name) ? body.extracted.name : undefined;
       }
       return NextResponse.json(await identifyFromExtracted(extracted, "text"));
     }
@@ -79,37 +133,9 @@ export async function POST(request: Request) {
 
     const bytes = Buffer.from(await file.arrayBuffer());
     const mimeType = file.type || "image/jpeg";
-
-    if (visionProvider()) {
-      try {
-        const vision = await identifyWithVision(bytes, mimeType);
-        if (vision?.name) {
-          return NextResponse.json(await identifyFromExtracted(vision, "vision"));
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Vision failed";
-        return NextResponse.json(
-          {
-            method: "vision",
-            extracted: {},
-            candidates: [],
-            visionAvailable: true,
-            message,
-          } satisfies IdentifyResponse,
-          { status: 502 },
-        );
-      }
-    }
-
-    return NextResponse.json({
-      method: "ocr",
-      extracted: {},
-      candidates: [],
-      visionAvailable: false,
-      message: "ocr-required",
-    } satisfies IdentifyResponse);
+    return NextResponse.json(await identifyFromImageBytes(bytes, mimeType));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Identify failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, message: READ_FAIL_MESSAGE }, { status: 500 });
   }
 }

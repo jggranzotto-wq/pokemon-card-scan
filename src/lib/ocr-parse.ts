@@ -1,10 +1,15 @@
 import { yearFromCopyrightText } from "./card-year";
-import { POKEMON_NAMES } from "./pokemon-names";
 import { photoLooksLikeSlab } from "./grades";
+import { EN_TO_JA, JA_TO_EN } from "./pokemon-names-ja";
+import { POKEMON_NAMES } from "./pokemon-names";
 import type { CardLanguage, CardVariant, ExtractedCard } from "../types/card";
 
+export const READ_FAIL_MESSAGE = "Couldn't read this card — try a flatter, brighter photo";
+
 const SKIP_LINE =
-  /^(basic|stage\s*[12]|hp|pokemon|pokémon|trainer|energy|weakness|resistance|retreat|ability|poke-power|poke-body|item|supporter|stadium|illustrator|illustrated|copyright|nintendo|creatures|game freak|the pok[eé]mon company|lv\.|level up)$/i;
+  /^(basic|stage\s*[12]|hp|pokemon|pokémon|trainer|energy|weakness|resistance|retreat|ability|poke-power|poke-body|item|supporter|stadium|illustrator|illustrated|copyright|nintendo|creatures|game freak|the pok[eé]mon company|lv\.|level up|弱点|抵抗力|にげる|特性|ワザ)$/i;
+
+const JA_NAMES = Object.keys(JA_TO_EN).sort((a, b) => b.length - a.length);
 
 function normalize(s: string): string {
   return s
@@ -60,10 +65,45 @@ function bestPokemonName(haystack: string): { name: string; score: number } | nu
   return best;
 }
 
-function detectLanguage(text: string): CardLanguage {
+export function englishNameFromJapanese(text: string): string | undefined {
+  if (!/[\u3040-\u30ff\u4e00-\u9faf]/.test(text)) return undefined;
+  for (const ja of JA_NAMES) {
+    if (text.includes(ja)) return JA_TO_EN[ja];
+  }
+  return undefined;
+}
+
+export function japaneseNameForEnglish(name: string): string | undefined {
+  return EN_TO_JA[name];
+}
+
+export function detectLanguage(text: string): CardLanguage {
   if (/[\u3040-\u30ff\u4e00-\u9faf]/.test(text)) return "Japanese";
   if (/\b(japanese|jp|jpn)\b/i.test(text)) return "Japanese";
   return "English";
+}
+
+/** True only for a readable printed name — never punctuation soup from a failed OCR. */
+export function isPlausibleCardName(name?: string | null): boolean {
+  if (!name) return false;
+  const trimmed = name.trim();
+  if (trimmed.length < 3 || trimmed.length > 42) return false;
+  if (SKIP_LINE.test(trimmed)) return false;
+  if (/[;:|®•_=]{2,}/.test(trimmed)) return false;
+  if (/[)(\]\[}{]/.test(trimmed) && !/^[A-Za-z].*'s /.test(trimmed)) return false;
+
+  const letters = trimmed.replace(/[^A-Za-z\u3040-\u30ff\u4e00-\u9faf]/g, "");
+  if (letters.length < 3) return false;
+
+  const junk = (trimmed.match(/[^A-Za-z0-9\s'&.\-\u3040-\u30ff\u4e00-\u9faf]/g) || []).length;
+  if (junk >= 2) return false;
+
+  if (englishNameFromJapanese(trimmed)) return true;
+  if (POKEMON_NAMES.some((n) => n.toLowerCase() === trimmed.toLowerCase())) return true;
+  if (bestPokemonName(trimmed)) return true;
+  if (/\b(GX|EX|VMAX|VSTAR|V-UNION)\b/i.test(trimmed) && letters.length >= 4) return true;
+  if (trimmed.split(/\s+/).filter(Boolean).length >= 2 && junk === 0 && letters.length >= 6) return true;
+  return false;
 }
 
 function detectVariant(text: string): CardVariant {
@@ -77,6 +117,11 @@ function detectVariant(text: string): CardVariant {
 }
 
 function collectorNumber(text: string): { number?: string; printedTotal?: string } {
+  const promoSlash = text.match(/\b(\d{1,3})\s*\/\s*([A-Z]{1,3}-P|[A-Z]{2,4}P)\b/i);
+  if (promoSlash) {
+    const suffix = promoSlash[2].toUpperCase().replace(/P$/, "-P").replace("--P", "-P");
+    return { number: String(Number(promoSlash[1])), printedTotal: suffix };
+  }
   const classic = text.match(/\b(\d{1,3})\s*\/\s*(\d{1,3})\b/);
   if (classic) {
     return { number: String(Number(classic[1])), printedTotal: classic[2] };
@@ -84,6 +129,18 @@ function collectorNumber(text: string): { number?: string; printedTotal?: string
   const promo = text.match(/\b(?:SWSH|SVI|SM|XY|BW|SVP|PR)\s*[- ]?\s*(\d{1,3})\b/i);
   if (promo) return { number: promo[1] };
   return {};
+}
+
+function printedNameGuess(lines: string[]): string | undefined {
+  for (const line of lines) {
+    const cleaned = line.replace(/\s+/g, " ").trim();
+    if (!isPlausibleCardName(cleaned)) continue;
+    if (bestPokemonName(cleaned) || englishNameFromJapanese(cleaned)) continue;
+    if (/\b(GX|EX|VMAX|VSTAR)\b/i.test(cleaned) || cleaned.split(" ").length >= 2) {
+      return cleaned.replace(/\s+/g, " ");
+    }
+  }
+  return undefined;
 }
 
 export function parseOcrText(raw: string): ExtractedCard {
@@ -95,29 +152,25 @@ export function parseOcrText(raw: string): ExtractedCard {
   const usable = lines.filter((line) => !SKIP_LINE.test(line) && !/^\d+$/.test(line));
   const blob = usable.join("\n");
   const nameHit = bestPokemonName(blob);
-  const nums = collectorNumber(blob);
+  const jaName = englishNameFromJapanese(raw);
+  const nums = collectorNumber(`${blob}\n${raw}`);
   const language = detectLanguage(raw);
   const variant = detectVariant(raw);
   const isSlab = photoLooksLikeSlab(raw);
 
-  let name = nameHit?.name;
-  if (!name) {
-    const guess = usable.find((line) => {
-      const n = normalize(line);
-      return n.length >= 3 && n.length <= 24 && !/\d/.test(n) && !SKIP_LINE.test(n);
-    });
-    name = guess;
-  }
+  const name = nameHit?.name || jaName || printedNameGuess(usable);
+  const confidence = nameHit ? Math.min(0.92, nameHit.score) : jaName ? 0.88 : name ? 0.62 : 0.1;
 
   return {
-    name,
+    name: isPlausibleCardName(name) ? name : undefined,
     collectorNumber: nums.number,
     printedTotal: nums.printedTotal,
+    set: nums.printedTotal && /P$/i.test(nums.printedTotal) ? nums.printedTotal : undefined,
     variant,
     language,
     isSlab,
     grade: null,
-    confidence: nameHit ? Math.min(0.92, nameHit.score) : name ? 0.35 : 0.1,
+    confidence,
     ocrText: raw.slice(0, 4000),
     copyrightYear: yearFromCopyrightText(raw),
   };

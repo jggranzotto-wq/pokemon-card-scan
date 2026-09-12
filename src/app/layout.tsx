@@ -1,13 +1,6 @@
 import type { Metadata, Viewport } from "next";
-import { Sora } from "next/font/google";
 import { RegisterSW } from "@/components/RegisterSW";
 import "./globals.css";
-
-const sora = Sora({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-sora",
-});
 
 export const metadata: Metadata = {
   title: "Pokémon Card Scan",
@@ -38,8 +31,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en-CA" className={sora.variable}>
-      <body className={`${sora.className} antialiased`}>
+    <html lang="en-CA">
+      <body className="antialiased">
         <RegisterSW />
         {children}
       </body>
