@@ -1,6 +1,6 @@
 # Pokémon Card Scan
 
-Mobile-first PWA for Android Chrome: take a photo of a Pokémon TCG card, identify the **name and collector number from the image**, then show recent eBay **sold** prices in **USD** plus an **approx CAD** conversion.
+Mobile-first PWA for Android Chrome: take a photo of a Pokémon TCG card, identify **name, collector number, set, year, and rarity** from the image plus official catalog data, then show recent eBay **sold** prices in **USD** plus an **approx CAD** conversion.
 
 Built for raw / ungraded Pokémon unless the photo is clearly a slab. No user account. You paste your own eBay Developer **App ID / Client ID** on the first screen.
 
@@ -39,8 +39,8 @@ The App ID is stored only in this browser’s `localStorage` (`card-scan.ebayApp
 ## Identify + solds
 
 1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
-2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex. The screen shows **Recognized: {name} {number}**. This step does not need an App ID.
-3. **Solds** — only after an App ID is saved. Keywords are that recognized **name + collector/set number**. Each new photo starts a new scan and does not reuse the previous card’s solds.
+2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex for official **set name, release year, and rarity**. The screen shows all five fields. Missing values say **Unknown** — they are not guessed. This step does not need an App ID.
+3. **Solds** — only after an App ID is saved. Keywords are the richer identity: **name + collector number + set**. Each new photo starts a new scan and refreshes every identity field.
 
 ## Optional environment variables
 

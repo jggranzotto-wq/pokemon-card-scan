@@ -14,4 +14,9 @@ describe("parseOcrText", () => {
     const parsed = parseOcrText("Charlzard\nHP 120\n4/102");
     assert.equal(parsed.name, "Charizard");
   });
+
+  it("reads a printed copyright year and ignores HP", () => {
+    const parsed = parseOcrText("Charizard\nHP 120\n4/102\n©1999 Nintendo");
+    assert.equal(parsed.copyrightYear, 1999);
+  });
 });

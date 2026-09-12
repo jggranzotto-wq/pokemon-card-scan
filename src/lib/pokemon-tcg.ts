@@ -1,4 +1,5 @@
 import type { CardLanguage, ExtractedCard, PokemonCard } from "../types/card";
+import { yearFromReleaseDate } from "./card-year";
 import { inferSetFromText } from "./ocr-parse";
 
 const POKEMONTCG = "https://api.pokemontcg.io/v2";
@@ -124,7 +125,7 @@ type ApiCard = {
   number: string;
   artist?: string;
   rarity?: string;
-  set: { id: string; name: string; series?: string; printedTotal?: number };
+  set: { id: string; name: string; series?: string; printedTotal?: number; releaseDate?: string };
   images?: { small?: string; large?: string };
   tcgplayer?: {
     url?: string;
@@ -142,7 +143,7 @@ type TcgdexListCard = {
   image?: string;
 };
 
-type TcgdexSet = { id: string; name: string; cardCount?: { official?: number } };
+type TcgdexSet = { id: string; name: string; cardCount?: { official?: number }; releaseDate?: string };
 
 type TcgdexCard = TcgdexListCard & {
   rarity?: string;
@@ -167,6 +168,8 @@ function pokemonTcgHeaders(): HeadersInit {
 }
 
 let setCache: { names: string[]; byId: Record<string, TcgdexSet>; at: number } | null = null;
+const setYearById = new Map<string, number>();
+let setYearsAt = 0;
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T | null> {
   try {
@@ -207,6 +210,46 @@ export async function listSetNames(): Promise<string[]> {
   return COMMON_SETS;
 }
 
+function rememberSetYear(setId: string | undefined, releaseDate?: string | null) {
+  if (!setId) return;
+  const year = yearFromReleaseDate(releaseDate);
+  if (year) setYearById.set(setId, year);
+}
+
+async function ensureSetYears(): Promise<void> {
+  if (setYearById.size && Date.now() - setYearsAt < 24 * 60 * 60 * 1000) return;
+
+  for (let page = 1; page <= 4; page += 1) {
+    const pokemon = await fetchJson<ApiList<{ id: string; name: string; releaseDate?: string }>>(
+      `${POKEMONTCG}/sets?pageSize=250&page=${page}`,
+      { headers: pokemonTcgHeaders() },
+    );
+    const rows = pokemon?.data ?? [];
+    for (const set of rows) rememberSetYear(set.id, set.releaseDate);
+    if (rows.length < 250) break;
+  }
+  setYearsAt = Date.now();
+}
+
+async function resolveSetYear(setId: string): Promise<number | null> {
+  await ensureSetYears();
+  const cached = setYearById.get(setId);
+  if (cached) return cached;
+
+  const tcgdex = await fetchJson<TcgdexSet>(`${TCGDEX}/en/sets/${encodeURIComponent(setId)}`);
+  rememberSetYear(setId, tcgdex?.releaseDate);
+  return setYearById.get(setId) ?? yearFromReleaseDate(tcgdex?.releaseDate);
+}
+
+function printedSetName(setId: string, fallback?: string): string {
+  return setCache?.byId[setId]?.name || fallback || setId;
+}
+
+function yearForSet(setId: string, releaseDate?: string | null): number | null {
+  rememberSetYear(setId, releaseDate);
+  return yearFromReleaseDate(releaseDate) ?? setYearById.get(setId) ?? null;
+}
+
 function tcgplayerSummary(card: ApiCard): PokemonCard["tcgplayer"] {
   const prices = card.tcgplayer?.prices;
   if (!prices) return card.tcgplayer?.url ? { url: card.tcgplayer.url } : undefined;
@@ -243,12 +286,13 @@ function toCard(card: ApiCard): PokemonCard {
   return {
     id: card.id,
     name: card.name,
-    setName: card.set.name,
+    setName: printedSetName(card.set.id, card.set.name),
     setId: card.set.id,
     setSeries: card.set.series,
     number: card.number,
     printedNumber: printedTotal ? `${card.number}/${printedTotal}` : card.number,
     rarity: card.rarity,
+    setYear: yearForSet(card.set.id, card.set.releaseDate),
     artist: card.artist,
     language: languageFromSet(card.set.id, card.set.name),
     images: { small: card.images?.small, large: card.images?.large },
@@ -283,11 +327,12 @@ function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard
   return {
     id: card.id,
     name: card.name,
-    setName: resolvedSet?.name ?? setIdFromCardId(card.id),
+    setName: printedSetName(resolvedSet?.id ?? setIdFromCardId(card.id), resolvedSet?.name),
     setId: resolvedSet?.id ?? setIdFromCardId(card.id),
     number,
     printedNumber: printedTotal ? `${number}/${printedTotal}` : number,
     rarity: detail?.rarity,
+    setYear: yearForSet(resolvedSet?.id ?? setIdFromCardId(card.id), resolvedSet?.releaseDate),
     artist: detail?.illustrator,
     language: languageFromSet(resolvedSet?.id ?? "", resolvedSet?.name ?? ""),
     images: tcgdexImages(card.image ?? detail?.image),
@@ -372,7 +417,41 @@ export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard
   }
   add(await searchTcgdex(extracted));
 
-  return rankCandidates(out, extracted).slice(0, 8);
+  const ranked = rankCandidates(out, extracted).slice(0, 8);
+  return hydrateCards(ranked);
+}
+
+async function hydrateCards(cards: PokemonCard[]): Promise<PokemonCard[]> {
+  await ensureSetYears();
+  return Promise.all(cards.map(hydrateCard));
+}
+
+async function hydrateCard(card: PokemonCard): Promise<PokemonCard> {
+  let next: PokemonCard = {
+    ...card,
+    setName: printedSetName(card.setId, card.setName),
+    setYear: card.setYear ?? setYearById.get(card.setId) ?? null,
+  };
+
+  if (!next.rarity) {
+    const detail = await getCardById(card.id);
+    if (detail) {
+      next = {
+        ...next,
+        rarity: detail.rarity || next.rarity,
+        setYear: detail.setYear ?? next.setYear,
+        setName: printedSetName(detail.setId || next.setId, detail.setName || next.setName),
+        images: detail.images.small ? detail.images : next.images,
+        tcgplayer: detail.tcgplayer ?? next.tcgplayer,
+        variantHints: detail.variantHints.length ? detail.variantHints : next.variantHints,
+      };
+    }
+  }
+
+  if (next.setYear == null) {
+    next = { ...next, setYear: await resolveSetYear(next.setId) };
+  }
+  return next;
 }
 
 export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): PokemonCard[] {
@@ -400,6 +479,7 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
 }
 
 export async function getCardById(id: string): Promise<PokemonCard | null> {
+  await listSetNames();
   const pokemon = await fetchJson<{ data: ApiCard }>(`${POKEMONTCG}/cards/${encodeURIComponent(id)}`, {
     headers: pokemonTcgHeaders(),
   });
@@ -407,7 +487,13 @@ export async function getCardById(id: string): Promise<PokemonCard | null> {
 
   for (const lang of ["en", "ja"] as const) {
     const detail = await fetchJson<TcgdexCard>(`${TCGDEX}/${lang}/cards/${encodeURIComponent(id)}`);
-    if (detail?.id) return tcgdexToCard(detail, detail.set, detail);
+    if (detail?.id) {
+      const card = tcgdexToCard(detail, detail.set, detail);
+      if (card.setYear == null) {
+        card.setYear = await resolveSetYear(card.setId);
+      }
+      return card;
+    }
   }
   return null;
 }
