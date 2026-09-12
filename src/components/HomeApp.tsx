@@ -105,6 +105,10 @@ export function HomeApp() {
     }
     setPhase("candidates");
     setProgress("");
+    if (!data.candidates?.length && data.extracted?.name) {
+      await loadSolds(null, data.extracted);
+      return;
+    }
     if (!data.candidates?.length) {
       setError(data.message || "No match. Search by name or try another photo.");
     }

@@ -22,10 +22,23 @@ async function identifyFromExtracted(
 ): Promise<IdentifyResponse> {
   const candidates = await lookupCards(extracted);
   const top = candidates[0];
-  const confident =
-    (extracted.confidence ?? 0) >= 0.55 &&
+  const second = candidates[1];
+  const topScoreGap = top && second ? top.name !== second.name || top.printedNumber !== second.printedNumber : true;
+  const numberOk =
+    !extracted.collectorNumber ||
+    (top && top.number.replace(/^0+/, "") === extracted.collectorNumber.replace(/^0+/, ""));
+  const totalOk =
+    !extracted.printedTotal ||
+    (top && top.printedNumber.endsWith(`/${extracted.printedTotal}`));
+  const nameOk = !extracted.name || (top && top.name.toLowerCase() === extracted.name.toLowerCase());
+  const confident = Boolean(
     top &&
-    (!extracted.name || top.name.toLowerCase().includes(extracted.name.toLowerCase()));
+    (extracted.confidence ?? 0) >= 0.55 &&
+    nameOk &&
+    numberOk &&
+    totalOk &&
+    topScoreGap,
+  );
 
   return {
     method,
@@ -35,7 +48,9 @@ async function identifyFromExtracted(
     visionAvailable: Boolean(visionProvider()),
     message: candidates.length
       ? undefined
-      : "No pokemontcg.io match. Tap a guess or search by name.",
+      : extracted.name
+        ? "No catalog match. You can still load solds for this name."
+        : "No match. Search by name or try another photo.",
   };
 }
 

@@ -27,7 +27,7 @@ Then open [http://localhost:3000](http://localhost:3000).
 1. **Photo** — rear camera (`capture=environment`) or gallery. Image is compressed on the phone.
 2. **Identify**
    - If `OPENAI_API_KEY` or `GEMINI_API_KEY` is set, a vision model reads name / set / number / variant / language / slab.
-   - Otherwise the app uses **Tesseract OCR** in the browser, then searches **[pokemontcg.io](https://pokemontcg.io/)** (free; optional API key for higher limits).
+   - Otherwise the app uses **Tesseract OCR** in the browser, then searches **[pokemontcg.io](https://pokemontcg.io/)** (free; optional API key for higher limits), with **[TCGdex](https://tcgdex.dev/)** as a no-key fallback if pokemontcg.io is down.
    - You get a short candidate list to tap if the match is not obvious.
 3. **Solds**
    - If `EBAY_APP_ID` is set, the server calls eBay Finding `findCompletedItems` with `SoldItemsOnly`.

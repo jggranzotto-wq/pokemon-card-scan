@@ -1,7 +1,122 @@
 import type { CardLanguage, ExtractedCard, PokemonCard } from "../types/card";
 import { inferSetFromText } from "./ocr-parse";
 
-const API = "https://api.pokemontcg.io/v2";
+const POKEMONTCG = "https://api.pokemontcg.io/v2";
+const TCGDEX = "https://api.tcgdex.net/v2";
+
+const COMMON_SETS = [
+  "Base",
+  "Base Set",
+  "Base Set 2",
+  "Jungle",
+  "Fossil",
+  "Team Rocket",
+  "Gym Heroes",
+  "Gym Challenge",
+  "Neo Genesis",
+  "Neo Discovery",
+  "Neo Revelation",
+  "Neo Destiny",
+  "Legendary Collection",
+  "Expedition",
+  "Aquapolis",
+  "Skyridge",
+  "Ruby & Sapphire",
+  "Sandstorm",
+  "Dragon",
+  "Team Magma vs Team Aqua",
+  "Hidden Legends",
+  "FireRed & LeafGreen",
+  "Team Rocket Returns",
+  "Deoxys",
+  "Emerald",
+  "Unseen Forces",
+  "Delta Species",
+  "Legend Maker",
+  "Holon Phantoms",
+  "Crystal Guardians",
+  "Dragon Frontiers",
+  "Power Keepers",
+  "Diamond & Pearl",
+  "Mysterious Treasures",
+  "Secret Wonders",
+  "Great Encounters",
+  "Majestic Dawn",
+  "Legends Awakened",
+  "Stormfront",
+  "Platinum",
+  "Rising Rivals",
+  "Supreme Victors",
+  "Arceus",
+  "HeartGold & SoulSilver",
+  "Unleashed",
+  "Undaunted",
+  "Triumphant",
+  "Call of Legends",
+  "Black & White",
+  "Emerging Powers",
+  "Noble Victories",
+  "Next Destinies",
+  "Dark Explorers",
+  "Dragons Exalted",
+  "Boundaries Crossed",
+  "Plasma Storm",
+  "Plasma Freeze",
+  "Plasma Blast",
+  "Legendary Treasures",
+  "XY",
+  "Flashfire",
+  "Furious Fists",
+  "Phantom Forces",
+  "Primal Clash",
+  "Roaring Skies",
+  "Ancient Origins",
+  "BREAKthrough",
+  "BREAKpoint",
+  "Fates Collide",
+  "Steam Siege",
+  "Evolutions",
+  "Sun & Moon",
+  "Guardians Rising",
+  "Burning Shadows",
+  "Crimson Invasion",
+  "Ultra Prism",
+  "Forbidden Light",
+  "Celestial Storm",
+  "Lost Thunder",
+  "Team Up",
+  "Unbroken Bonds",
+  "Unified Minds",
+  "Cosmic Eclipse",
+  "Sword & Shield",
+  "Rebel Clash",
+  "Darkness Ablaze",
+  "Vivid Voltage",
+  "Battle Styles",
+  "Chilling Reign",
+  "Evolving Skies",
+  "Fusion Strike",
+  "Brilliant Stars",
+  "Astral Radiance",
+  "Lost Origin",
+  "Silver Tempest",
+  "Crown Zenith",
+  "Scarlet & Violet",
+  "Paldea Evolved",
+  "Obsidian Flames",
+  "Paradox Rift",
+  "Paldean Fates",
+  "Temporal Forces",
+  "Twilight Masquerade",
+  "Shrouded Fable",
+  "Stellar Crown",
+  "Surging Sparks",
+  "Prismatic Evolutions",
+  "Journey Together",
+  "Destined Rivals",
+  "Black Bolt",
+  "White Flare",
+];
 
 type ApiCard = {
   id: string;
@@ -20,27 +135,76 @@ type ApiCard = {
 
 type ApiList<T> = { data: T[] };
 
-function headers(): HeadersInit {
+type TcgdexListCard = {
+  id: string;
+  localId: string;
+  name: string;
+  image?: string;
+};
+
+type TcgdexSet = { id: string; name: string; cardCount?: { official?: number } };
+
+type TcgdexCard = TcgdexListCard & {
+  rarity?: string;
+  illustrator?: string;
+  set?: TcgdexSet;
+  variants?: { firstEdition?: boolean; holo?: boolean; reverse?: boolean };
+  pricing?: {
+    tcgplayer?: {
+      updated?: string;
+      holofoil?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
+      normal?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
+      reverseHolofoil?: { marketPrice?: number; lowPrice?: number; highPrice?: number };
+    };
+  };
+};
+
+const UA = { "User-Agent": "pokemon-card-scan/1.0 (https://github.com/jggranzotto-wq/pokemon-card-scan)" };
+
+function pokemonTcgHeaders(): HeadersInit {
   const key = process.env.POKEMONTCG_API_KEY;
-  return key ? { "X-Api-Key": key } : {};
+  return key ? { ...UA, "X-Api-Key": key } : UA;
 }
 
-let setCache: { names: string[]; at: number } | null = null;
+let setCache: { names: string[]; byId: Record<string, TcgdexSet>; at: number } | null = null;
+
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(url, { ...init, headers: { ...UA, ...(init?.headers ?? {}) } });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
 
 export async function listSetNames(): Promise<string[]> {
   if (setCache && Date.now() - setCache.at < 24 * 60 * 60 * 1000) {
     return setCache.names;
   }
-  try {
-    const res = await fetch(`${API}/sets?pageSize=250`, { headers: headers() });
-    if (!res.ok) return setCache?.names ?? [];
-    const json = (await res.json()) as ApiList<{ name: string }>;
-    const names = json.data.map((s) => s.name);
-    setCache = { names, at: Date.now() };
+
+  const tcgdex = await fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`);
+  if (tcgdex?.length) {
+    const byId: Record<string, TcgdexSet> = {};
+    for (const set of tcgdex) byId[set.id] = set;
+    const names = Array.from(new Set([...COMMON_SETS, ...tcgdex.map((s) => s.name)]));
+    setCache = { names, byId, at: Date.now() };
     return names;
-  } catch {
-    return setCache?.names ?? [];
   }
+
+  const pokemon = await fetchJson<ApiList<{ id: string; name: string }>>(`${POKEMONTCG}/sets?pageSize=250`, {
+    headers: pokemonTcgHeaders(),
+  });
+  if (pokemon?.data?.length) {
+    const byId: Record<string, TcgdexSet> = {};
+    for (const set of pokemon.data) byId[set.id] = { id: set.id, name: set.name };
+    const names = Array.from(new Set([...COMMON_SETS, ...pokemon.data.map((s) => s.name)]));
+    setCache = { names, byId, at: Date.now() };
+    return names;
+  }
+
+  setCache = { names: COMMON_SETS, byId: {}, at: Date.now() };
+  return COMMON_SETS;
 }
 
 function tcgplayerSummary(card: ApiCard): PokemonCard["tcgplayer"] {
@@ -64,13 +228,13 @@ function languageFromSet(setId: string, setName: string): CardLanguage {
   return "English";
 }
 
-function variantHints(card: ApiCard): string[] {
-  const hints: string[] = [];
-  if (card.rarity) hints.push(card.rarity);
-  const rarity = (card.rarity ?? "").toLowerCase();
-  if (rarity.includes("holo")) hints.push("holo");
-  if (rarity.includes("reverse")) hints.push("reverse");
-  if (rarity.includes("1st") || rarity.includes("first edition")) hints.push("1st edition");
+function variantHintsFromRarity(rarity?: string, extras: string[] = []): string[] {
+  const hints = [...extras];
+  if (rarity) hints.push(rarity);
+  const text = hints.join(" ").toLowerCase();
+  if (text.includes("holo")) hints.push("holo");
+  if (text.includes("reverse")) hints.push("reverse");
+  if (text.includes("1st") || text.includes("first edition")) hints.push("1st edition");
   return Array.from(new Set(hints));
 }
 
@@ -88,8 +252,55 @@ function toCard(card: ApiCard): PokemonCard {
     artist: card.artist,
     language: languageFromSet(card.set.id, card.set.name),
     images: { small: card.images?.small, large: card.images?.large },
-    variantHints: variantHints(card),
+    variantHints: variantHintsFromRarity(card.rarity),
     tcgplayer: tcgplayerSummary(card),
+  };
+}
+
+function setIdFromCardId(id: string): string {
+  const cut = id.lastIndexOf("-");
+  return cut > 0 ? id.slice(0, cut) : id;
+}
+
+function tcgdexImages(image?: string): { small?: string; large?: string } {
+  if (!image) return {};
+  return { small: `${image}/low.webp`, large: `${image}/high.webp` };
+}
+
+function tcgdexToCard(card: TcgdexListCard, set?: TcgdexSet, detail?: TcgdexCard): PokemonCard {
+  const resolvedSet = detail?.set ?? set;
+  const number = card.localId.replace(/^0+/, "") || card.localId;
+  const printedTotal = resolvedSet?.cardCount?.official;
+  const extras: string[] = [];
+  if (detail?.variants?.firstEdition) extras.push("1st edition");
+  if (detail?.variants?.holo) extras.push("holo");
+  if (detail?.variants?.reverse) extras.push("reverse");
+  const prices = detail?.pricing?.tcgplayer;
+  const market =
+    prices?.holofoil?.marketPrice ?? prices?.reverseHolofoil?.marketPrice ?? prices?.normal?.marketPrice;
+  const low = prices?.holofoil?.lowPrice ?? prices?.normal?.lowPrice;
+  const high = prices?.holofoil?.highPrice ?? prices?.normal?.highPrice;
+  return {
+    id: card.id,
+    name: card.name,
+    setName: resolvedSet?.name ?? setIdFromCardId(card.id),
+    setId: resolvedSet?.id ?? setIdFromCardId(card.id),
+    number,
+    printedNumber: printedTotal ? `${number}/${printedTotal}` : number,
+    rarity: detail?.rarity,
+    artist: detail?.illustrator,
+    language: languageFromSet(resolvedSet?.id ?? "", resolvedSet?.name ?? ""),
+    images: tcgdexImages(card.image ?? detail?.image),
+    variantHints: variantHintsFromRarity(detail?.rarity, extras),
+    tcgplayer:
+      market || low
+        ? {
+            updatedAt: prices?.updated,
+            marketUsd: market,
+            lowUsd: low,
+            highUsd: high,
+          }
+        : undefined,
   };
 }
 
@@ -97,12 +308,33 @@ function escapeLucene(value: string): string {
   return value.replace(/([+\-!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
-async function searchCards(q: string): Promise<PokemonCard[]> {
-  const url = `${API}/cards?q=${encodeURIComponent(q)}&pageSize=12&orderBy=-set.releaseDate`;
-  const res = await fetch(url, { headers: headers() });
-  if (!res.ok) return [];
-  const json = (await res.json()) as ApiList<ApiCard>;
-  return json.data.map(toCard);
+async function searchPokemonTcg(q: string): Promise<PokemonCard[]> {
+  const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&pageSize=12`;
+  const json = await fetchJson<ApiList<ApiCard>>(url, { headers: pokemonTcgHeaders() });
+  return json?.data?.map(toCard) ?? [];
+}
+
+async function searchTcgdex(extracted: ExtractedCard): Promise<PokemonCard[]> {
+  const name = extracted.name?.trim();
+  if (!name) return [];
+  const lang = extracted.language === "Japanese" ? "ja" : "en";
+  const list = await fetchJson<TcgdexListCard[]>(
+    `${TCGDEX}/${lang}/cards?name=${encodeURIComponent(name)}`,
+  );
+  if (!list?.length) return [];
+
+  await listSetNames();
+  const wantNumber = extracted.collectorNumber?.replace(/^0+/, "");
+  const filtered = list.filter((card) => {
+    if (!wantNumber) return true;
+    return card.localId.replace(/^0+/, "") === wantNumber;
+  });
+  const pool = filtered.length ? filtered : list;
+  const mapped = pool.slice(0, 24).map((card) => {
+    const set = setCache?.byId[setIdFromCardId(card.id)];
+    return tcgdexToCard(card, set);
+  });
+  return rankCandidates(mapped, extracted).slice(0, 8);
 }
 
 export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard[]> {
@@ -123,21 +355,22 @@ export async function lookupCards(extracted: ExtractedCard): Promise<PokemonCard
   if (name) {
     queries.push(`name:"${escapeLucene(name)}"`);
   }
-  if (name && name.includes(" ")) {
-    queries.push(`name:${escapeLucene(name.split(" ")[0])}*`);
-  }
 
   const seen = new Set<string>();
   const out: PokemonCard[] = [];
-  for (const q of queries) {
-    const rows = await searchCards(q);
+  const add = (rows: PokemonCard[]) => {
     for (const row of rows) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       out.push(row);
     }
-    if (out.length >= 8) break;
+  };
+
+  for (const q of queries) {
+    add(await searchPokemonTcg(q));
+    if (out.length >= 12) break;
   }
+  add(await searchTcgdex(extracted));
 
   return rankCandidates(out, extracted).slice(0, 8);
 }
@@ -154,7 +387,9 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
     if (wantName && card.name.toLowerCase() === wantName) s += 8;
     else if (wantName && card.name.toLowerCase().includes(wantName)) s += 4;
     if (wantNumber && card.number.replace(/^0+/, "") === wantNumber) s += 7;
-    if (wantSet && card.setName.toLowerCase().includes(wantSet)) s += 5;
+    if (wantSet && card.setName.toLowerCase() === wantSet) s += 8;
+    else if (wantSet && card.setName.toLowerCase().includes(wantSet)) s += 2;
+    if (extracted.printedTotal && card.printedNumber.endsWith(`/${extracted.printedTotal}`)) s += 6;
     if (extracted.language && card.language === extracted.language) s += 1;
     if (extracted.variant && extracted.variant !== "unknown") {
       const hints = card.variantHints.join(" ").toLowerCase();
@@ -165,8 +400,14 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
 }
 
 export async function getCardById(id: string): Promise<PokemonCard | null> {
-  const res = await fetch(`${API}/cards/${encodeURIComponent(id)}`, { headers: headers() });
-  if (!res.ok) return null;
-  const json = (await res.json()) as { data: ApiCard };
-  return toCard(json.data);
+  const pokemon = await fetchJson<{ data: ApiCard }>(`${POKEMONTCG}/cards/${encodeURIComponent(id)}`, {
+    headers: pokemonTcgHeaders(),
+  });
+  if (pokemon?.data) return toCard(pokemon.data);
+
+  for (const lang of ["en", "ja"] as const) {
+    const detail = await fetchJson<TcgdexCard>(`${TCGDEX}/${lang}/cards/${encodeURIComponent(id)}`);
+    if (detail?.id) return tcgdexToCard(detail, detail.set, detail);
+  }
+  return null;
 }
