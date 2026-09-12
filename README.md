@@ -1,8 +1,8 @@
 # Pokémon Card Scan
 
-Mobile-first PWA for Android Chrome: take a photo of a Pokémon TCG card, identify it, and see recent eBay **sold** prices in **USD** plus an **approx CAD** conversion.
+Mobile-first PWA for Android Chrome: take a photo of a Pokémon TCG card, identify the **name and collector number from the image**, then show recent eBay **sold** prices in **USD** plus an **approx CAD** conversion.
 
-Built for raw / ungraded Pokémon unless the photo is clearly a slab. No account. No eBay seller login.
+Built for raw / ungraded Pokémon unless the photo is clearly a slab. No user account. You paste your own eBay Developer **App ID / Client ID** on the first screen.
 
 ## Run it
 
@@ -17,39 +17,41 @@ Then open [http://localhost:3000](http://localhost:3000).
 
 1. Find your computer’s LAN IP (`ipconfig` / `ifconfig` / `ip addr`).
 2. On Android Chrome, open `http://YOUR-LAN-IP:3000`.
-3. Grant camera access when prompted.
-4. Optional: Chrome menu → **Add to Home screen** for the standalone PWA.
+3. On first launch, paste your eBay App ID and tap **Save**.
+4. Grant camera access when prompted.
+5. Optional: Chrome menu → **Add to Home screen**.
 
 `npm run dev` already binds to `0.0.0.0` so the phone can reach it.
 
-## Identify + solds (how it works)
+## eBay App ID (first screen)
 
-1. **Photo** — rear camera (`capture=environment`) or gallery. Image is compressed on the phone.
-2. **Identify**
-   - If `OPENAI_API_KEY` or `GEMINI_API_KEY` is set, a vision model reads name / set / number / variant / language / slab.
-   - Otherwise the app uses **Tesseract OCR** in the browser, then searches **[pokemontcg.io](https://pokemontcg.io/)** (free; optional API key for higher limits), with **[TCGdex](https://tcgdex.dev/)** as a no-key fallback if pokemontcg.io is down.
-   - You get a short candidate list to tap if the match is not obvious.
-3. **Solds**
-   - If `EBAY_APP_ID` is set, the server calls eBay Finding `findCompletedItems` with `SoldItemsOnly`.
-   - If that key is missing (or eBay returns nothing), the solds panel uses **clearly labeled example rows**: *Example data — not live solds*.
-   - A real **Open eBay sold search** link is always included.
-   - TCGPlayer market (from pokemontcg.io) may appear as extra context and is labeled as **not** eBay solds.
+The app asks for an App ID **before** camera/upload.
 
-The app never invents live-looking market numbers. Example rows say they are not real sales.
+1. Open [developer.ebay.com](https://developer.ebay.com/) and sign in.
+2. Open [Application Keys](https://developer.ebay.com/my/keys).
+3. Copy the Production **App ID (Client ID)** — not Cert ID, not your seller password.
+4. Paste it and tap Save.
 
-## Environment variables
+It is stored only in this browser’s `localStorage` (`card-scan.ebayAppId`). Nothing is committed to the repo. Change or clear it later with the settings gear or the footer links.
 
-Copy `.env.example` to `.env.local` and fill what you have. **All keys are optional.**
+The App ID is sent with each solds request to the Finding API (`findCompletedItems`, sold items only). If it is missing or eBay rejects it, the app shows an error and returns you to the App ID field. It does **not** fall back to a hardcoded key or fake live solds.
+
+## Identify + solds
+
+1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
+2. **Identify** — vision (if `OPENAI_API_KEY` / `GEMINI_API_KEY` exist) or Tesseract OCR on the image, then pokemontcg.io / TCGdex. The screen shows **Recognized: {name} {number}** before solds load.
+3. **Solds** — eBay search keywords are that recognized **name + collector/set number** (plus set when known). Each new photo starts a new scan and does not reuse the previous card’s solds.
+
+## Optional environment variables
+
+Copy `.env.example` to `.env.local` if you want better photo ID. **None of these are required** for the app to run, and **eBay solds use the on-device App ID**, not a server env secret.
 
 | Variable | Used for |
 | --- | --- |
 | `OPENAI_API_KEY` | Best photo ID (`gpt-4o-mini` vision) |
 | `GEMINI_API_KEY` | Vision fallback if OpenAI is unset |
 | `POKEMONTCG_API_KEY` | Higher pokemontcg.io rate limits ([free key](https://dev.pokemontcg.io/)) |
-| `EBAY_APP_ID` | Live eBay **sold** comps (Finding API App ID / Client ID). Seller credentials are **not** required. Create an app at [developer.ebay.com](https://developer.ebay.com/). |
 | `USD_CAD_RATE` | Optional USD→CAD override. If unset, a public daily rate is fetched (Frankfurter) and labeled as approx. |
-
-PriceCharting was considered as a no-key solds proxy; their pages are Cloudflare-protected, so this app does **not** scrape them.
 
 ## Scripts
 
@@ -62,8 +64,8 @@ npm test         # parser / money / sold-band unit tests
 
 ## Deploy
 
-Any single Next.js host works (Vercel, Node, Docker). Set the env vars on the host. After deploy, open the HTTPS URL in Android Chrome and Add to Home screen.
+Any single Next.js host works (Vercel, Node, Docker). After deploy, open the HTTPS URL in Android Chrome, paste your App ID, then Add to Home screen.
 
 ## Privacy
 
-Photos are sent only to this app’s `/api/identify` route (and to OpenAI or Gemini if you configured those keys). There is no user account and nothing is stored by the app itself.
+Photos go to this app’s `/api/identify` route (and to OpenAI or Gemini only if those keys are configured on the server). Your eBay App ID stays on the phone and is sent only to `/api/solds` so the server can call eBay. There is no user account.

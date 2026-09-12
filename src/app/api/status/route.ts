@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { hasEbayAppId } from "@/lib/ebay";
 import { visionProvider } from "@/lib/vision";
 import type { StatusResponse } from "@/types/card";
 
@@ -10,7 +9,7 @@ export function GET() {
   const body: StatusResponse = {
     vision: Boolean(provider),
     visionProvider: provider ?? undefined,
-    ebay: hasEbayAppId(),
+    ebay: false,
     pokemonTcgKey: Boolean(process.env.POKEMONTCG_API_KEY),
   };
   return NextResponse.json(body);

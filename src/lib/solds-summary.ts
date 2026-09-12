@@ -52,12 +52,15 @@ export function soldsQuery(input: {
   name: string;
   setName?: string;
   number?: string;
+  printedNumber?: string;
   variant?: string;
   language?: string;
 }): string {
-  const parts = [input.name, "Pokemon"];
+  const number = input.printedNumber || input.number;
+  const parts = [input.name];
+  if (number) parts.push(number);
+  parts.push("Pokemon");
   if (input.setName) parts.push(input.setName);
-  if (input.number) parts.push(input.number);
   if (input.variant && input.variant !== "unknown" && input.variant !== "standard") {
     parts.push(input.variant);
   }

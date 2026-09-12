@@ -22,10 +22,12 @@ describe("soldsRequestBody", () => {
       set: "Base Set",
       collectorNumber: "4",
     };
-    const body = soldsRequestBody(pikachu, staleCharizard);
+    const body = soldsRequestBody(pikachu, staleCharizard, undefined, "MyApp-PRD-test");
     assert.equal(body.name, "Pikachu");
     assert.equal(body.setName, "Base");
     assert.equal(body.number, "58");
+    assert.equal(body.printedNumber, "58/102");
     assert.equal(body.cardId, "base1-58");
+    assert.equal(body.ebayAppId, "MyApp-PRD-test");
   });
 });
