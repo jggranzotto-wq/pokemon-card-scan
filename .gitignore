@@ -44,3 +44,19 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# Capacitor / Android
+/www
+/.export-api-backup
+/.export-middleware-backup.ts
+/android/app/build
+/android/.gradle
+/android/local.properties
+/android/app/.cxx
+/android/keystore.properties
+*.apk
+*.aab
+*.ap_
+*.jks
+*.keystore
+!android/gradle/wrapper/gradle-wrapper.jar

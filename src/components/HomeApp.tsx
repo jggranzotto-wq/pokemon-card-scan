@@ -17,6 +17,8 @@ import { ManualIdentify } from "@/components/ManualIdentify";
 import { parseCollectorInput } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
+import { apiUrl } from "@/lib/api-origin";
+import { isNativeApp, isPhotoCancel, pickNativePhoto } from "@/lib/native-photo";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
 import type {
@@ -52,7 +54,7 @@ export function HomeApp() {
     setAppId(saved);
     setShowSetup(shouldShowEbaySetupOnLaunch(saved, readEbaySetupSeen()));
     setReady(true);
-    void fetch("/api/status")
+    void fetch(apiUrl("/api/status"))
       .then((res) => res.json())
       .then(setStatus)
       .catch(() => setStatus(null));
@@ -103,7 +105,7 @@ export function HomeApp() {
 
       const form = new FormData();
       form.append("image", blob, "card.jpg");
-      const res = await fetch("/api/identify", { method: "POST", body: form, cache: "no-store" });
+      const res = await fetch(apiUrl("/api/identify"), { method: "POST", body: form, cache: "no-store" });
       const data = (await res.json()) as IdentifyResponse & { error?: string };
       if (!scansRef.current.isCurrent(scan)) return;
       if (!res.ok && data.message !== "ocr-required") {
@@ -141,7 +143,7 @@ export function HomeApp() {
         }
         if (!scansRef.current.isCurrent(scan)) return;
         setProgress("Matching the card…");
-        const ocrRes = await fetch("/api/identify", {
+        const ocrRes = await fetch(apiUrl("/api/identify"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           cache: "no-store",
@@ -210,7 +212,7 @@ export function HomeApp() {
     setPhase("working");
     const label = recognizedLabel(extract, card);
     setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
-    const res = await fetch("/api/solds", {
+    const res = await fetch(apiUrl("/api/solds"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
@@ -239,12 +241,38 @@ export function HomeApp() {
     }
   }
 
+  async function onTakePhoto() {
+    if (isNativeApp()) {
+      try {
+        await onFile(await pickNativePhoto("camera"));
+      } catch (err) {
+        if (isPhotoCancel(err)) return;
+        setError(err instanceof Error ? err.message : "Could not open the camera.");
+      }
+      return;
+    }
+    cameraRef.current?.click();
+  }
+
+  async function onChooseGallery() {
+    if (isNativeApp()) {
+      try {
+        await onFile(await pickNativePhoto("gallery"));
+      } catch (err) {
+        if (isPhotoCancel(err)) return;
+        setError(err instanceof Error ? err.message : "Could not open the gallery.");
+      }
+      return;
+    }
+    galleryRef.current?.click();
+  }
+
   async function onSample() {
     const scan = beginScan();
     try {
       setPreview(SAMPLE_CARD.image);
       setProgress("Matching sample card…");
-      const res = await fetch("/api/identify", {
+      const res = await fetch(apiUrl("/api/identify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -274,7 +302,7 @@ export function HomeApp() {
     try {
       setPreview(null);
       setProgress("Searching the catalog…");
-      const res = await fetch("/api/identify", {
+      const res = await fetch(apiUrl("/api/identify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -403,14 +431,14 @@ export function HomeApp() {
       <div className="mt-4 grid gap-3">
         <button
           type="button"
-          onClick={() => cameraRef.current?.click()}
+          onClick={() => void onTakePhoto()}
           className="min-h-14 rounded-2xl bg-bolt px-4 text-lg font-semibold text-ink active:scale-[0.99]"
         >
           Take photo
         </button>
         <button
           type="button"
-          onClick={() => galleryRef.current?.click()}
+          onClick={() => void onChooseGallery()}
           className="min-h-14 rounded-2xl bg-ink-raised px-4 text-lg font-semibold ring-1 ring-ink-line active:scale-[0.99]"
         >
           Choose from gallery
