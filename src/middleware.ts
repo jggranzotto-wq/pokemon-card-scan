@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+export const runtime = "nodejs";
+
 function corsHeaders(origin: string | null): HeadersInit {
   const allow = origin && isAllowedOrigin(origin) ? origin : "*";
   return {
