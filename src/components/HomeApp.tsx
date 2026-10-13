@@ -45,7 +45,6 @@ import type {
 type Phase = "idle" | "working" | "candidates" | "solds";
 
 const NETWORK_ERROR = "The photo didn't reach the server. Check your connection, or search by name.";
-const EMPTY_MATCH = "No matching card. Search by name, year, and set.";
 
 function failureMessage(err: unknown, fallback: string): string {
   if (!(err instanceof Error)) return fallback;
@@ -186,7 +185,12 @@ export function HomeApp() {
     return next.id;
   }
 
-  function showFailure(scan: number, message: string, identify: IdentifyResponse | null = null) {
+  function showFailure(
+    scan: number,
+    message: string,
+    identify: IdentifyResponse | null = null,
+    notice: string | null = null,
+  ) {
     if (!isPersistedScanCurrent(scan)) return;
     clearScanClock();
     const session: ScanSession = {
@@ -196,7 +200,7 @@ export function HomeApp() {
       solds: null,
       selectedId: null,
       error: message,
-      notice: null,
+      notice,
       manual: true,
       startedAt: null,
     };
@@ -304,15 +308,15 @@ export function HomeApp() {
       candidates: data.candidates ?? [],
     };
     const auto = normalized.candidates.find((card) => card.id === data.autoSelectedId) ?? null;
-    const fallbackNote = data.message && isVisionFallbackMessage(data.message) ? data.message : null;
+    const fallbackNote = data.notice || (data.message && isVisionFallbackMessage(data.message) ? data.message : null);
     const noCandidates = normalized.candidates.length === 0;
 
-    if (noCandidates && !extract.name) {
-      showFailure(scan, data.message || READ_FAIL_MESSAGE, normalized);
+    if (!auto && noCandidates) {
+      showFailure(scan, data.message || READ_FAIL_MESSAGE, normalized, data.notice ?? fallbackNote);
       return;
     }
 
-    if (auto || noCandidates) {
+    if (auto) {
       try {
         setSelected(auto);
         setExtracted(extract);
@@ -324,10 +328,10 @@ export function HomeApp() {
           phase: "solds",
           identify: normalized,
           solds: sold,
-          selectedId: auto?.id ?? null,
-          error: noCandidates ? data.message || EMPTY_MATCH : null,
-          notice: fallbackNote,
-          manual: noCandidates,
+          selectedId: auto.id,
+          error: null,
+          notice: data.notice ?? fallbackNote,
+          manual: false,
           startedAt: null,
         });
       } catch (err) {
@@ -343,7 +347,7 @@ export function HomeApp() {
       solds: null,
       selectedId: null,
       error: null,
-      notice: fallbackNote,
+      notice: data.notice ?? fallbackNote,
       manual: false,
       startedAt: null,
     });
@@ -666,7 +670,9 @@ export function HomeApp() {
         </p>
       ) : null}
       {notice ? (
-        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper">{notice}</p>
+        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper" role="status">
+          {notice}
+        </p>
       ) : null}
       {error ? (
         <p className="mt-4 rounded-2xl bg-coral/15 px-4 py-3 text-sm text-coral">{error}</p>

@@ -1,3 +1,5 @@
+export const VISION_QUOTA_NOTE = "Photo recognition quota is used up.";
+
 export const VISION_UNAVAILABLE_NOTE =
   "Photo recognition is unavailable right now. The card was read from the text in the photo instead.";
 
@@ -6,7 +8,11 @@ export const VISION_UNREAD_NOTE =
 
 export function isVisionFallbackMessage(message?: string): boolean {
   if (!message) return false;
-  return message.startsWith(VISION_UNAVAILABLE_NOTE) || message.startsWith(VISION_UNREAD_NOTE);
+  return (
+    message.startsWith(VISION_QUOTA_NOTE) ||
+    message.startsWith(VISION_UNAVAILABLE_NOTE) ||
+    message.startsWith(VISION_UNREAD_NOTE)
+  );
 }
 
 export function withVisionFallbackNote(note: string, existing?: string): string {

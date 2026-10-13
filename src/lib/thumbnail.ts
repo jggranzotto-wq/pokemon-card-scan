@@ -13,15 +13,23 @@ export function decodeThumbnail(input: string | undefined | null): { bytes: Buff
   return { bytes, mime };
 }
 
+export function isCatalogImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && ALLOWED_IMAGE_HOSTS.has(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchCatalogThumbnail(url: string | null | undefined): Promise<{ bytes: Buffer; mime: string } | null> {
-  if (!url) return null;
+  if (!url || !isCatalogImageUrl(url)) return null;
   let parsed: URL;
   try {
     parsed = new URL(url);
   } catch {
     return null;
   }
-  if (parsed.protocol !== "https:" || !ALLOWED_IMAGE_HOSTS.has(parsed.hostname)) return null;
   const response = await fetch(parsed, { cache: "no-store" });
   if (!response.ok) return null;
   const mime = (response.headers.get("content-type") || "image/jpeg").split(";")[0].trim();

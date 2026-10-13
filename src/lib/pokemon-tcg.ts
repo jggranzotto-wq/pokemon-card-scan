@@ -1,6 +1,7 @@
 import type { CardLanguage, CatalogSet, ExtractedCard, PokemonCard } from "../types/card";
 import { preferDisplaySetName } from "./catalog";
 import { yearFromReleaseDate } from "./card-year";
+import { selectOcrPool } from "./ocr-match";
 import { englishNameFromJapanese, inferSetFromText, japaneseNameForEnglish } from "./ocr-parse";
 
 const POKEMONTCG = "https://api.pokemontcg.io/v2";
@@ -469,10 +470,35 @@ function escapeLucene(value: string): string {
   return value.replace(/([+\-!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
-async function searchPokemonTcg(q: string): Promise<PokemonCard[]> {
-  const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&pageSize=12`;
+async function searchPokemonTcg(q: string, pageSize = 12): Promise<PokemonCard[]> {
+  const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&pageSize=${pageSize}`;
   const json = await fetchJson<ApiList<ApiCard>>(url, { headers: pokemonTcgHeaders() });
   return json?.data?.map(toCard) ?? [];
+}
+
+/** Free catalog search narrowed by a fuzzy name and/or a collector number such as 223/197. */
+export async function lookupOcrCandidates(extracted: ExtractedCard): Promise<PokemonCard[]> {
+  const name = extracted.name?.trim();
+  const number = extracted.collectorNumber?.trim();
+  if (!name && !number) return [];
+
+  const seen = new Set<string>();
+  const out: PokemonCard[] = [];
+  const add = (rows: PokemonCard[]) => {
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      out.push(row);
+    }
+  };
+
+  if (name && number) {
+    add(await searchPokemonTcg(`name:"${escapeLucene(name)}" number:"${escapeLucene(number)}"`, 16));
+  }
+  if (name) add(await searchPokemonTcg(`name:"${escapeLucene(name)}"`, 16));
+  if (number) add(await searchPokemonTcg(`number:"${escapeLucene(number)}"`, 40));
+  if (name) add(await searchTcgdex(extracted));
+  return selectOcrPool(out, extracted, 12);
 }
 
 async function searchTcgdex(extracted: ExtractedCard): Promise<PokemonCard[]> {
