@@ -10,8 +10,10 @@ type CatalogPayload = { years: number[]; sets: CatalogSet[] };
 export function ManualIdentify({
   busy,
   onSearch,
+  openToken = 0,
 }: {
   busy?: boolean;
+  openToken?: number;
   onSearch: (input: { name: string; year?: number; setName?: string; setId?: string; number?: string }) => void;
 }) {
   const [name, setName] = useState("");
@@ -22,6 +24,14 @@ export function ManualIdentify({
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [openSuggest, setOpenSuggest] = useState(false);
   const debounceRef = useRef<number | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!openToken) return;
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    nameRef.current?.focus();
+  }, [openToken]);
 
   useEffect(() => {
     void fetch(apiUrl("/api/catalog"), { cache: "no-store" })
@@ -80,7 +90,7 @@ export function ManualIdentify({
   }
 
   return (
-    <section className="mt-5 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
+    <section ref={sectionRef} className="mt-5 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
       <h2 className="text-base font-semibold">Find by name</h2>
       <p className="mt-1 text-sm text-paper-mute">
         Type the Pokémon or card name. Photo is optional — use year and set when you know them.
@@ -90,6 +100,7 @@ export function ManualIdentify({
         <label className="grid gap-1.5">
           <span className="text-sm font-semibold">Name</span>
           <input
+            ref={nameRef}
             value={name}
             onChange={(event) => {
               setName(event.target.value);

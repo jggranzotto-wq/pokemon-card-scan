@@ -41,6 +41,23 @@ type Card = {
 
 type History = Partial<Record<PriceSource, { day: string; amountUsd: number | null; status: QuoteStatus }[]>>;
 
+function DetailText({ text }: { text: string }) {
+  const parts = text.split(/(https:\/\/[^\s]+)/g);
+  return (
+    <p className="mt-2 text-sm text-paper-mute">
+      {parts.map((part, index) =>
+        part.startsWith("https://") ? (
+          <a key={index} href={part} target="_blank" rel="noreferrer" className="text-sky underline">
+            {part.replace(/^https:\/\//, "")}
+          </a>
+        ) : (
+          <span key={index}>{part}</span>
+        ),
+      )}
+    </p>
+  );
+}
+
 export function CardScreen() {
   const params = useSearchParams();
   const id = params.get("id") || "";
@@ -147,7 +164,7 @@ export function CardScreen() {
                   <MoneyPair amountUsd={price.status === "ok" ? price.amountUsd : null} rate={rate} status={price.status} />
                 </p>
                 <p className="mt-1 text-xs text-paper-mute">Updated {formatWhen(price.observedAt)}</p>
-                {price.detail ? <p className="mt-2 text-sm text-paper-mute">{price.detail}</p> : null}
+                {price.detail ? <DetailText text={price.detail} /> : null}
               </article>
             ))}
           </div>

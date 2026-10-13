@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { EbaySetup } from "@/components/EbaySetup";
 import { apiUrl } from "@/lib/api-origin";
 import { apiFetch, readCollectionToken, writeCollectionToken } from "@/lib/client-api";
+import { COLLECTR_REGISTER_URL, COLLECTR_TERMS_URL } from "@/lib/collectr-links";
 import { clearEbayAppId, readEbayAppId, writeEbayAppId } from "@/lib/ebay-app-id";
 import type { StatusResponse } from "@/types/card";
 import { TopNav } from "./TopNav";
@@ -67,7 +68,15 @@ export function SettingsScreen() {
       <section className="mt-4 rounded-3xl bg-ink-card p-4 ring-1 ring-ink-line">
         <h2 className="font-semibold">Collectr</h2>
         <p className="mt-2 text-sm text-paper-mute">
-          Register at getcollectr.com/api, then set COLLECTR_API_KEY and the COLLECTR_API_BASE from the docs they send. Until then every Collectr price says Not connected. This app does not scrape Collectr.
+          Register at the{" "}
+          <a href={COLLECTR_REGISTER_URL} target="_blank" rel="noreferrer" className="text-sky underline">
+            Collectr API portal
+          </a>
+          , then set COLLECTR_API_KEY and the COLLECTR_API_BASE from the docs they send. The{" "}
+          <a href={COLLECTR_TERMS_URL} target="_blank" rel="noreferrer" className="text-sky underline">
+            API terms
+          </a>{" "}
+          forbid scraping. Until then every Collectr price says Not connected.
         </p>
       </section>
 
@@ -77,7 +86,10 @@ export function SettingsScreen() {
         <input
           type="password"
           value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          onChange={(event) => {
+            setPassword(event.target.value);
+            writeCollectionToken(event.target.value);
+          }}
           className="mt-3 min-h-12 w-full rounded-2xl bg-ink px-3 ring-1 ring-ink-line"
         />
         <button

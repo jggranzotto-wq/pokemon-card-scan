@@ -21,7 +21,18 @@ import { parseCollectorInput } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { isVisionFallbackMessage } from "@/lib/vision-messages";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
-import { createScanGuard } from "@/lib/scan-guard";
+import {
+  advancePersistedScan,
+  beginPersistedScan,
+  clearScanClock,
+  currentScanId,
+  isPersistedScanCurrent,
+  publishScanSession,
+  readScanSession,
+  readScanStartedAt,
+  SCAN_EVENT,
+  type ScanSession,
+} from "@/lib/scan-session";
 import { soldsRequestBody } from "@/lib/solds-request";
 import type {
   ExtractedCard,
@@ -33,10 +44,18 @@ import type {
 
 type Phase = "idle" | "working" | "candidates" | "solds";
 
+const NETWORK_ERROR = "The photo didn't reach the server. Check your connection, or search by name.";
+const EMPTY_MATCH = "No matching card. Search by name, year, and set.";
+
+function failureMessage(err: unknown, fallback: string): string {
+  if (!(err instanceof Error)) return fallback;
+  if (err.name === "TypeError" || /failed to fetch|networkerror|load failed/i.test(err.message)) return NETWORK_ERROR;
+  return err.message || fallback;
+}
+
 export function HomeApp() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
-  const scansRef = useRef(createScanGuard());
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -52,18 +71,70 @@ export function HomeApp() {
   const [showSetup, setShowSetup] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [photo, setPhoto] = useState<Blob | null>(null);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [manualToken, setManualToken] = useState(0);
+
+  function applySession(session: ScanSession) {
+    const identify = session.identify;
+    const extract = identify?.extracted ?? {};
+    const nextCandidates = identify?.candidates ?? [];
+    setPhase(session.phase === "idle" ? "candidates" : session.phase);
+    setError(session.error);
+    setNotice(session.notice);
+    setExtracted(extract);
+    setCandidates(nextCandidates);
+    setSelected(nextCandidates.find((card) => card.id === session.selectedId) ?? null);
+    setSolds(session.solds);
+    setStartedAt(session.phase === "working" ? session.startedAt : null);
+    setProgress(session.phase === "working" ? "Identifying the card…" : "");
+    if (session.manual) setManualToken(session.scanId || 1);
+  }
+
+  const applySessionRef = useRef(applySession);
+  applySessionRef.current = applySession;
 
   useEffect(() => {
-    const saved = readEbayAppId();
-    setAppId(saved);
-    setShowSetup(shouldShowEbaySetupOnLaunch(saved, readEbaySetupSeen()));
+    const savedApp = readEbayAppId();
+    setAppId(savedApp);
+    setShowSetup(shouldShowEbaySetupOnLaunch(savedApp, readEbaySetupSeen()));
+    const onResult = (event: Event) => {
+      const session = (event as CustomEvent<ScanSession>).detail;
+      if (session) applySessionRef.current(session);
+    };
+    window.addEventListener(SCAN_EVENT, onResult);
+    const savedScan = readScanSession();
+    if (savedScan?.phase === "working" && currentScanId() === 0) {
+      applySessionRef.current({
+        ...savedScan,
+        phase: "candidates",
+        error:
+          savedScan.error ||
+          "The scan was interrupted before the result could be shown. Search by name, or take the photo again.",
+        manual: true,
+        startedAt: null,
+      });
+    } else if (savedScan) {
+      applySessionRef.current(savedScan);
+    } else {
+      setStartedAt(readScanStartedAt());
+    }
     setReady(true);
     void fetch(apiUrl("/api/status"))
       .then((res) => res.json())
       .then(setStatus)
       .catch(() => setStatus(null));
     void preloadOcr();
+    return () => window.removeEventListener(SCAN_EVENT, onResult);
   }, []);
+
+  useEffect(() => {
+    if (phase !== "working" || startedAt == null) return;
+    const tick = () => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [phase, startedAt]);
 
   useEffect(() => {
     return () => {
@@ -91,7 +162,7 @@ export function HomeApp() {
   }, [status, appId]);
 
   function beginScan() {
-    const scan = scansRef.current.begin();
+    const next = beginPersistedScan();
     setError(null);
     setNotice(null);
     setSolds(null);
@@ -99,7 +170,55 @@ export function HomeApp() {
     setCandidates([]);
     setExtracted({});
     setPhase("working");
-    return scan;
+    setStartedAt(next.startedAt);
+    setElapsed(0);
+    setProgress("Identifying the card…");
+    publishScanSession(next.id, {
+      phase: "working",
+      identify: null,
+      solds: null,
+      selectedId: null,
+      error: null,
+      notice: null,
+      manual: false,
+      startedAt: next.startedAt,
+    });
+    return next.id;
+  }
+
+  function showFailure(scan: number, message: string, identify: IdentifyResponse | null = null) {
+    if (!isPersistedScanCurrent(scan)) return;
+    clearScanClock();
+    const session: ScanSession = {
+      scanId: scan,
+      phase: "candidates",
+      identify,
+      solds: null,
+      selectedId: null,
+      error: message,
+      notice: null,
+      manual: true,
+      startedAt: null,
+    };
+    publishScanSession(scan, session);
+    applySession(session);
+  }
+
+  async function readJson<T>(res: Response, emptyFallback: string): Promise<T & { error?: string }> {
+    let text = "";
+    try {
+      text = await res.text();
+    } catch (err) {
+      throw new Error(failureMessage(err, emptyFallback));
+    }
+    if (!text.trim()) {
+      throw new Error(res.ok ? "The server sent an empty response. Search by name instead." : `${emptyFallback} (${res.status}).`);
+    }
+    try {
+      return JSON.parse(text) as T & { error?: string };
+    } catch {
+      throw new Error("The server sent an unreadable response. Search by name instead.");
+    }
   }
 
   async function identifyBlob(blob: Blob, previewUrl: string) {
@@ -111,10 +230,10 @@ export function HomeApp() {
       const form = new FormData();
       form.append("image", blob, "card.jpg");
       const res = await fetch(apiUrl("/api/identify"), { method: "POST", body: form, cache: "no-store" });
-      const data = (await res.json()) as IdentifyResponse & { error?: string };
-      if (!scansRef.current.isCurrent(scan)) return;
+      const data = await readJson<IdentifyResponse>(res, "Could not identify that card. Search by name instead.");
+      if (!isPersistedScanCurrent(scan)) return;
       if (!res.ok && data.message !== "ocr-required") {
-        throw new Error(data.error || data.message || "Could not identify that card.");
+        throw new Error(data.error || data.message || "Could not identify that card. Search by name instead.");
       }
 
       if (data.message === "ocr-required") {
@@ -123,8 +242,8 @@ export function HomeApp() {
           Promise.race([
             readCardText(
               blob,
-              (status) => {
-                if (scansRef.current.isCurrent(scan)) setProgress(status);
+              (statusText) => {
+                if (isPersistedScanCurrent(scan)) setProgress(statusText);
               },
               lang,
             ),
@@ -146,7 +265,7 @@ export function HomeApp() {
             // Keep the English read; the server will reject garbage names.
           }
         }
-        if (!scansRef.current.isCurrent(scan)) return;
+        if (!isPersistedScanCurrent(scan)) return;
         setProgress("Matching the card…");
         const ocrRes = await fetch(apiUrl("/api/identify"), {
           method: "POST",
@@ -154,8 +273,8 @@ export function HomeApp() {
           cache: "no-store",
           body: JSON.stringify({ text }),
         });
-        const ocrData = (await ocrRes.json()) as IdentifyResponse & { error?: string };
-        if (!scansRef.current.isCurrent(scan)) return;
+        const ocrData = await readJson<IdentifyResponse>(ocrRes, READ_FAIL_MESSAGE);
+        if (!isPersistedScanCurrent(scan)) return;
         if (!ocrRes.ok) throw new Error(ocrData.error || READ_FAIL_MESSAGE);
         await applyIdentify(ocrData, scan);
         return;
@@ -163,52 +282,71 @@ export function HomeApp() {
 
       await applyIdentify(data, scan);
     } catch (err) {
-      if (!scansRef.current.isCurrent(scan)) return;
-      throw err;
+      showFailure(scan, failureMessage(err, "Could not identify that card. Search by name instead."));
     }
   }
 
+  function commitSession(scan: number, session: Omit<ScanSession, "scanId">) {
+    if (!isPersistedScanCurrent(scan)) return;
+    publishScanSession(scan, session);
+    applySession({ ...session, scanId: scan });
+  }
+
   async function applyIdentify(data: IdentifyResponse, scan: number) {
-    if (!scansRef.current.isCurrent(scan)) return;
+    if (!isPersistedScanCurrent(scan)) return;
     const extract = {
       ...(data.extracted ?? {}),
       name: isPlausibleCardName(data.extracted?.name) ? data.extracted?.name : undefined,
     };
-    setExtracted(extract);
-    setCandidates(data.candidates ?? []);
-    const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
-    const fallbackNote =
-      data.message && isVisionFallbackMessage(data.message) ? data.message : null;
-    if (auto) {
-      setSelected(auto);
-      if (fallbackNote) setNotice(fallbackNote);
-      await finishAfterIdentify(auto, extract, scan);
-      return;
-    }
-    if (!scansRef.current.isCurrent(scan)) return;
-    setPhase("candidates");
-    setProgress("");
-    if (!data.candidates?.length && extract.name) {
-      await finishAfterIdentify(null, extract, scan);
-      if (data.message) setError(data.message);
-      return;
-    }
-    if (!data.candidates?.length) {
-      setError(data.message || READ_FAIL_MESSAGE);
-      return;
-    }
-    if (fallbackNote) setNotice(fallbackNote);
-  }
+    const normalized: IdentifyResponse = {
+      ...data,
+      extracted: extract,
+      candidates: data.candidates ?? [],
+    };
+    const auto = normalized.candidates.find((card) => card.id === data.autoSelectedId) ?? null;
+    const fallbackNote = data.message && isVisionFallbackMessage(data.message) ? data.message : null;
+    const noCandidates = normalized.candidates.length === 0;
 
-  async function finishAfterIdentify(
-    card: PokemonCard | null,
-    extract: ExtractedCard,
-    scan: number,
-  ) {
-    if (!scansRef.current.isCurrent(scan)) return;
-    const label = recognizedLabel(extract, card);
-    setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
-    await loadSolds(card, extract, undefined, scan);
+    if (noCandidates && !extract.name) {
+      showFailure(scan, data.message || READ_FAIL_MESSAGE, normalized);
+      return;
+    }
+
+    if (auto || noCandidates) {
+      try {
+        setSelected(auto);
+        setExtracted(extract);
+        setCandidates(normalized.candidates);
+        const sold = await loadSolds(auto, extract, undefined, scan);
+        if (!sold || !isPersistedScanCurrent(scan)) return;
+        clearScanClock();
+        commitSession(scan, {
+          phase: "solds",
+          identify: normalized,
+          solds: sold,
+          selectedId: auto?.id ?? null,
+          error: noCandidates ? data.message || EMPTY_MATCH : null,
+          notice: fallbackNote,
+          manual: noCandidates,
+          startedAt: null,
+        });
+      } catch (err) {
+        showFailure(scan, failureMessage(err, "Could not load comparables."), normalized);
+      }
+      return;
+    }
+
+    clearScanClock();
+    commitSession(scan, {
+      phase: "candidates",
+      identify: normalized,
+      solds: null,
+      selectedId: null,
+      error: null,
+      notice: fallbackNote,
+      manual: false,
+      startedAt: null,
+    });
   }
 
   async function loadSolds(
@@ -217,25 +355,28 @@ export function HomeApp() {
     nameOverride: string | undefined,
     scan: number,
     ebayAppId = appId,
-  ) {
-    if (!scansRef.current.isCurrent(scan)) return;
+  ): Promise<SoldsResponse | null> {
+    if (!isPersistedScanCurrent(scan)) return null;
     setPhase("working");
     const label = recognizedLabel(extract, card);
     setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
-    const res = await fetch(apiUrl("/api/solds"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-      body: JSON.stringify(soldsRequestBody(card, extract, nameOverride, ebayAppId)),
-    });
-    const data = (await res.json()) as SoldsResponse & { error?: string };
-    if (!scansRef.current.isCurrent(scan)) return;
+    let res: Response;
+    try {
+      res = await fetch(apiUrl("/api/solds"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(soldsRequestBody(card, extract, nameOverride, ebayAppId)),
+      });
+    } catch (err) {
+      throw new Error(failureMessage(err, "Could not load comparables."));
+    }
+    const data = await readJson<SoldsResponse>(res, "Could not load comparables.");
+    if (!isPersistedScanCurrent(scan)) return null;
     if (!res.ok) {
       throw new Error(data.error || "Could not load comparables.");
     }
-    setSolds(data);
-    setPhase("solds");
-    setProgress("");
+    return data;
   }
 
   async function onFile(file: File | undefined) {
@@ -246,9 +387,11 @@ export function HomeApp() {
       const url = URL.createObjectURL(blob);
       await identifyBlob(blob, url);
     } catch (err) {
-      setPhase("idle");
+      setPhase("candidates");
       setProgress("");
-      setError(err instanceof Error ? err.message : "Something went wrong.");
+      setStartedAt(null);
+      setError(failureMessage(err, "Could not read that photo. Search by name instead."));
+      setManualToken((token) => token + 1);
     }
   }
 
@@ -264,15 +407,12 @@ export function HomeApp() {
         cache: "no-store",
         body: JSON.stringify({ text: SAMPLE_CARD.text }),
       });
-      const data = (await res.json()) as IdentifyResponse & { error?: string };
-      if (!scansRef.current.isCurrent(scan)) return;
-      if (!res.ok) throw new Error(data.error || "Sample identify failed.");
+      const data = await readJson<IdentifyResponse>(res, "Sample identify failed. Search by name instead.");
+      if (!isPersistedScanCurrent(scan)) return;
+      if (!res.ok) throw new Error(data.error || "Sample identify failed. Search by name instead.");
       await applyIdentify(data, scan);
     } catch (err) {
-      if (!scansRef.current.isCurrent(scan)) return;
-      setPhase("idle");
-      setProgress("");
-      setError(err instanceof Error ? err.message : "Sample failed.");
+      showFailure(scan, failureMessage(err, "Sample identify failed. Search by name instead."));
     }
   }
 
@@ -305,16 +445,23 @@ export function HomeApp() {
           },
         }),
       });
-      const data = (await res.json()) as IdentifyResponse & { error?: string };
-      if (!scansRef.current.isCurrent(scan)) return;
+      const data = await readJson<IdentifyResponse>(res, "Search failed.");
+      if (!isPersistedScanCurrent(scan)) return;
       if (!res.ok) throw new Error(data.error || "Search failed.");
       await applyIdentify(data, scan);
     } catch (err) {
-      if (!scansRef.current.isCurrent(scan)) return;
-      setPhase("candidates");
-      setProgress("");
-      setError(err instanceof Error ? err.message : "Search failed.");
+      showFailure(scan, failureMessage(err, "Search failed."));
     }
+  }
+
+  function currentIdentify(): IdentifyResponse {
+    return {
+      method: "text",
+      extracted,
+      candidates,
+      autoSelectedId: selected?.id,
+      visionAvailable: Boolean(status?.vision),
+    };
   }
 
   function saveAppId(next: string) {
@@ -323,11 +470,31 @@ export function HomeApp() {
     setSetupError(null);
     setShowSetup(false);
     if (hasCardIdentity(extracted, selected)) {
-      const scan = scansRef.current.begin();
-      void loadSolds(selected, extracted, undefined, scan, next).catch((err) => {
-        if (!scansRef.current.isCurrent(scan)) return;
-        setError(err instanceof Error ? err.message : "Could not load comparables.");
-      });
+      const scan = advancePersistedScan();
+      const started = Date.now();
+      setStartedAt(started);
+      void loadSolds(selected, extracted, undefined, scan, next)
+        .then((sold) => {
+          if (!sold) return;
+          clearScanClock();
+          commitSession(scan, {
+            phase: "solds",
+            identify: currentIdentify(),
+            solds: sold,
+            selectedId: selected?.id ?? null,
+            error: null,
+            notice,
+            manual: false,
+            startedAt: null,
+          });
+        })
+        .catch((err) => {
+          if (!isPersistedScanCurrent(scan)) return;
+          setPhase(solds ? "solds" : "candidates");
+          setStartedAt(null);
+          setProgress("");
+          setError(failureMessage(err, "Could not load comparables."));
+        });
     }
   }
 
@@ -342,11 +509,30 @@ export function HomeApp() {
     setAppId("");
     setSetupError(null);
     if (hasCardIdentity(extracted, selected)) {
-      const scan = scansRef.current.begin();
-      void loadSolds(selected, extracted, undefined, scan, "").catch((err) => {
-        if (!scansRef.current.isCurrent(scan)) return;
-        setError(err instanceof Error ? err.message : "Could not load comparables.");
-      });
+      const scan = advancePersistedScan();
+      setStartedAt(Date.now());
+      void loadSolds(selected, extracted, undefined, scan, "")
+        .then((sold) => {
+          if (!sold) return;
+          clearScanClock();
+          commitSession(scan, {
+            phase: "solds",
+            identify: currentIdentify(),
+            solds: sold,
+            selectedId: selected?.id ?? null,
+            error: null,
+            notice,
+            manual: false,
+            startedAt: null,
+          });
+        })
+        .catch((err) => {
+          if (!isPersistedScanCurrent(scan)) return;
+          setPhase(solds ? "solds" : "candidates");
+          setStartedAt(null);
+          setProgress("");
+          setError(failureMessage(err, "Could not load comparables."));
+        });
     } else {
       setSolds(null);
     }
@@ -464,10 +650,20 @@ export function HomeApp() {
         }}
       />
 
-      <ManualIdentify busy={phase === "working"} onSearch={(input) => void onManualSearch(input)} />
+      <ManualIdentify
+        busy={phase === "working"}
+        openToken={manualToken}
+        onSearch={(input) => void onManualSearch(input)}
+      />
 
-      {progress ? (
-        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-bolt">{progress}</p>
+      {phase === "working" ? (
+        <p
+          className="mt-4 rounded-2xl bg-bolt/15 px-4 py-3 text-sm font-semibold text-bolt"
+          role="status"
+          aria-live="polite"
+        >
+          {progress || "Identifying the card…"} <span className="tabular-nums">{elapsed}s</span>
+        </p>
       ) : null}
       {notice ? (
         <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper">{notice}</p>
@@ -477,7 +673,7 @@ export function HomeApp() {
       ) : null}
 
       {showIdentity ? (
-        <CardIdentityPanel identity={identity} image={selected?.images.small} note={identityNote} />
+        <CardIdentityPanel identity={identity} image={selected?.images?.small} note={identityNote} />
       ) : null}
 
       {candidates.length > 0 && phase !== "working" ? (
@@ -493,20 +689,39 @@ export function HomeApp() {
                   <button
                     type="button"
                     onClick={() => {
-                      const scan = scansRef.current.begin();
+                      const scan = advancePersistedScan();
+                      setStartedAt(Date.now());
                       setSolds(null);
                       setSelected(card);
-                      void finishAfterIdentify(card, extracted, scan).catch((err) => {
-                        if (!scansRef.current.isCurrent(scan)) return;
-                        setError(err instanceof Error ? err.message : "Comparables failed.");
-                        setPhase("candidates");
-                      });
+                      setPhase("working");
+                      void loadSolds(card, extracted, undefined, scan)
+                        .then((sold) => {
+                          if (!sold) return;
+                          clearScanClock();
+                          commitSession(scan, {
+                            phase: "solds",
+                            identify: { ...currentIdentify(), autoSelectedId: card.id },
+                            solds: sold,
+                            selectedId: card.id,
+                            error: null,
+                            notice,
+                            manual: false,
+                            startedAt: null,
+                          });
+                        })
+                        .catch((err) => {
+                          if (!isPersistedScanCurrent(scan)) return;
+                          setPhase("candidates");
+                          setStartedAt(null);
+                          setProgress("");
+                          setError(failureMessage(err, "Comparables failed."));
+                        });
                     }}
                     className={`flex w-full min-h-20 items-center gap-3 rounded-2xl px-3 py-2 text-left ring-1 ${
                       active ? "bg-sky/20 ring-sky" : "bg-ink-card ring-ink-line"
                     }`}
                   >
-                    {card.images.small ? (
+                    {card.images?.small ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={card.images.small} alt="" className="h-16 w-12 rounded-md object-cover" />
                     ) : (
@@ -558,7 +773,7 @@ export function HomeApp() {
           variant={extracted.variant}
           language={extracted.language || selected?.language}
           condition={extracted.grade || undefined}
-          imageUrl={selected?.images.large || selected?.images.small}
+          imageUrl={selected?.images?.large || selected?.images?.small}
           photo={photo}
         />
       ) : null}

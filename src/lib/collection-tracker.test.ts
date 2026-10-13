@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeVariant } from "./card-fields";
+import { COLLECTR_REGISTER_URL, COLLECTR_TERMS_URL } from "./collectr-links";
 import { chooseCollectrProduct, parseCollectrProducts, quoteCollectr } from "./prices/collectr";
 import { quoteTcgplayer } from "./prices/tcgplayer";
 import { parseInsightSales, quoteEbaySold, selectLastSold } from "./prices/ebay-sold";
@@ -17,7 +18,7 @@ import { query } from "./db";
 test("a catalog outage is an error instead of a missing card", async () => {
   const quote = await quoteTcgplayer(
     { catalogId: "base1-4", name: "Charizard", variant: "holo" },
-    { env: {} as NodeJS.ProcessEnv, fetch: async () => new Response("unavailable", { status: 500 }) },
+    { env: {} as unknown as NodeJS.ProcessEnv, fetch: async () => new Response("unavailable", { status: 500 }) },
   );
   assert.equal(quote.status, "error");
   assert.equal(quote.amountUsd, null);
@@ -58,9 +59,13 @@ test("missing prices roll up as not connected, never zero", () => {
 });
 
 test("collectr stays disconnected without a key and rejects a weak match", async () => {
-  const closed = await quoteCollectr({ name: "Charizard" }, { env: {} as NodeJS.ProcessEnv });
+  const closed = await quoteCollectr({ name: "Charizard" }, { env: {} as unknown as NodeJS.ProcessEnv });
   assert.equal(closed.status, "not_connected");
   assert.equal(closed.amountUsd, null);
+  assert.match(closed.detail || "", new RegExp(COLLECTR_REGISTER_URL.replace(/[.]/g, "\\.")));
+  assert.match(closed.detail || "", new RegExp(COLLECTR_TERMS_URL.replace(/[.]/g, "\\.")));
+  assert.equal(COLLECTR_REGISTER_URL, "https://getcollectr.com/api");
+  assert.equal(COLLECTR_TERMS_URL, "https://getcollectr.com/api-terms-and-conditions.html");
 
   const products = parseCollectrProducts({
     products: [
@@ -75,7 +80,7 @@ test("collectr stays disconnected without a key and rejects a weak match", async
   const quoted = await quoteCollectr(
     { name: "Charizard", number: "4", setName: "Base Set", condition: "NM" },
     {
-      env: { COLLECTR_API_KEY: "test-key", COLLECTR_API_BASE: "https://collectr.example" } as NodeJS.ProcessEnv,
+      env: { COLLECTR_API_KEY: "test-key", COLLECTR_API_BASE: "https://collectr.example" } as unknown as NodeJS.ProcessEnv,
       fetch: async (input) => {
         const url = String(input);
         calls.push(url);
@@ -93,7 +98,7 @@ test("collectr stays disconnected without a key and rejects a weak match", async
 });
 
 test("ebay sold uses insights when approved and stays blank otherwise", async () => {
-  const closed = await quoteEbaySold({ name: "Charizard" }, { env: {} as NodeJS.ProcessEnv, fetch: async () => { throw new Error("network"); } });
+  const closed = await quoteEbaySold({ name: "Charizard" }, { env: {} as unknown as NodeJS.ProcessEnv, fetch: async () => { throw new Error("network"); } });
   assert.equal(closed.status, "not_connected");
   assert.equal(closed.amountUsd, null);
   assert.match(closed.detail || "", /Marketplace Insights/);
@@ -101,7 +106,7 @@ test("ebay sold uses insights when approved and stays blank otherwise", async ()
   const quoted = await quoteEbaySold(
     { name: "Charizard", setName: "Base Set", printedNumber: "4/102", condition: "NM" },
     {
-      env: { EBAY_CLIENT_ID: "app", EBAY_CLIENT_SECRET: "cert" } as NodeJS.ProcessEnv,
+      env: { EBAY_CLIENT_ID: "app", EBAY_CLIENT_SECRET: "cert" } as unknown as NodeJS.ProcessEnv,
       usdCadRate: 1.4,
       fetch: async (input) => {
         const url = String(input);
@@ -128,7 +133,7 @@ test("ebay sold uses insights when approved and stays blank otherwise", async ()
   const denied = await quoteEbaySold(
     { name: "Charizard" },
     {
-      env: { EBAY_CLIENT_ID: "app", EBAY_CLIENT_SECRET: "cert" } as NodeJS.ProcessEnv,
+      env: { EBAY_CLIENT_ID: "app", EBAY_CLIENT_SECRET: "cert" } as unknown as NodeJS.ProcessEnv,
       skipFinding: true,
       fetch: async (input) => {
         const url = String(input);

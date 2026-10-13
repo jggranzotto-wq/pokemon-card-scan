@@ -23,8 +23,16 @@ If you cannot read the card, still return JSON with nulls and low confidence.`;
 export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 /** Google's other current recommendation for new projects. Also accepts images and JSON. */
 export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite";
-/** Extra attempts after the first response, only for HTTP 429 and 503. */
-export const GEMINI_RETRY_DELAYS_MS = [400, 800];
+/** Abort each Gemini HTTP call so a hung 503 cannot consume the route. */
+export const GEMINI_CALL_TIMEOUT_MS = 12_000;
+/** First try plus one immediate retry. No extra attempts and no backoff sleep. */
+export const GEMINI_MAX_ATTEMPTS = 2;
+/**
+ * Shared ceiling for every model. Two 12s attempts fit, then OCR still has
+ * time inside the identify route's 60s maxDuration.
+ */
+export const GEMINI_TOTAL_BUDGET_MS = 26_000;
+const MIN_GEMINI_CALL_MS = 500;
 
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 const LOW_THINKING_MODELS = new Set([
@@ -42,6 +50,8 @@ export type VisionDeps = {
   sleepImpl?: (ms: number) => Promise<void>;
   env?: NodeJS.ProcessEnv;
   log?: LogFn;
+  timeoutMs?: number;
+  budgetMs?: number;
 };
 
 export type GeminiCallResult =
@@ -177,8 +187,8 @@ function readableVisionFailure(status: number): string {
   return "Photo recognition is unavailable right now.";
 }
 
-async function defaultSleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 export async function requestGeminiModel(
@@ -190,24 +200,31 @@ export async function requestGeminiModel(
     fetchImpl?: FetchLike;
     sleepImpl?: (ms: number) => Promise<void>;
     log?: LogFn;
+    timeoutMs?: number;
+    deadline?: number;
   },
 ): Promise<GeminiCallResult> {
   assertModelId(model);
   const fetchImpl = options.fetchImpl ?? fetch;
-  const sleepImpl = options.sleepImpl ?? defaultSleep;
   const log = options.log ?? ((line) => console.error(line));
+  const timeoutMs = options.timeoutMs ?? GEMINI_CALL_TIMEOUT_MS;
+  const deadline = options.deadline ?? Date.now() + GEMINI_TOTAL_BUDGET_MS;
   const secrets = [options.apiKey];
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${options.apiKey}`;
-  const maxAttempts = GEMINI_RETRY_DELAYS_MS.length + 1;
-  let last: GeminiCallResult = { ok: false, status: 0, errorMessage: "empty error body" };
+  let last: GeminiCallResult = { ok: false, status: 0, errorMessage: "timed out" };
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) await sleepImpl(GEMINI_RETRY_DELAYS_MS[attempt - 1]);
+  for (let attempt = 0; attempt < GEMINI_MAX_ATTEMPTS; attempt++) {
+    const remaining = deadline - Date.now();
+    if (remaining < MIN_GEMINI_CALL_MS) return last;
+    const callTimeout = Math.min(timeoutMs, remaining);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), callTimeout);
     let res: Response;
     try {
       res = await fetchImpl(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           contents: [
             {
@@ -221,10 +238,15 @@ export async function requestGeminiModel(
         }),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "network error";
+      const aborted = isAbortError(error) || controller.signal.aborted;
+      const message = aborted ? "timed out" : error instanceof Error ? error.message : "network error";
       const errorMessage = redactVisionLog(message, secrets);
       logVision(`[vision] gemini model=${model} status=0 error=${errorMessage}`, secrets, log);
-      return { ok: false, status: 0, errorMessage };
+      last = { ok: false, status: 0, errorMessage };
+      if (!aborted || attempt + 1 >= GEMINI_MAX_ATTEMPTS) return last;
+      continue;
+    } finally {
+      clearTimeout(timer);
     }
 
     if (res.ok) {
@@ -242,7 +264,7 @@ export async function requestGeminiModel(
     const errorMessage = providerErrorMessage(body, secrets);
     logVision(`[vision] gemini model=${model} status=${res.status} error=${errorMessage}`, secrets, log);
     last = { ok: false, status: res.status, errorMessage };
-    if (res.status !== 429 && res.status !== 503) return last;
+    if ((res.status !== 429 && res.status !== 503) || attempt + 1 >= GEMINI_MAX_ATTEMPTS) return last;
   }
 
   return last;
@@ -258,14 +280,19 @@ export async function identifyGemini(
   if (!apiKey) throw new Error("Photo recognition is not configured.");
   const { primary, fallback } = geminiModelConfig(env);
   const models = [primary, ...(fallback ? [fallback] : [])];
+  const timeoutMs = deps.timeoutMs ?? GEMINI_CALL_TIMEOUT_MS;
+  const deadline = Date.now() + (deps.budgetMs ?? GEMINI_TOTAL_BUDGET_MS);
   let lastStatus = 0;
 
   for (const model of models) {
+    if (deadline - Date.now() < MIN_GEMINI_CALL_MS) break;
     const result = await requestGeminiModel(model, imageBytes, mimeType, {
       apiKey,
       fetchImpl: deps.fetchImpl,
       sleepImpl: deps.sleepImpl,
       log: deps.log,
+      timeoutMs,
+      deadline,
     });
     if (!result.ok) {
       lastStatus = result.status;

@@ -10,7 +10,7 @@ import {
 import {
   DEFAULT_GEMINI_FALLBACK_MODEL,
   DEFAULT_GEMINI_MODEL,
-  GEMINI_RETRY_DELAYS_MS,
+  GEMINI_MAX_ATTEMPTS,
   geminiModelConfig,
   identifyGemini,
   providerErrorMessage,
@@ -52,7 +52,7 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Response): type
 
 describe("geminiModelConfig", () => {
   it("defaults to the current stable flash models", () => {
-    const config = geminiModelConfig({} as NodeJS.ProcessEnv);
+    const config = geminiModelConfig({} as unknown as NodeJS.ProcessEnv);
     assert.equal(config.primary, DEFAULT_GEMINI_MODEL);
     assert.equal(config.primary, "gemini-3.8-flash");
     assert.equal(config.fallback, DEFAULT_GEMINI_FALLBACK_MODEL);
@@ -63,14 +63,14 @@ describe("geminiModelConfig", () => {
     const config = geminiModelConfig({
       GEMINI_MODEL: "gemini-3.6-flash",
       GEMINI_FALLBACK_MODEL: "",
-    } as NodeJS.ProcessEnv);
+    } as unknown as NodeJS.ProcessEnv);
     assert.equal(config.primary, "gemini-3.6-flash");
     assert.equal(config.fallback, null);
   });
 
   it("rejects a model id that is not a single token", () => {
     assert.throws(
-      () => geminiModelConfig({ GEMINI_MODEL: "gemini-3.8-flash?key=secret" } as NodeJS.ProcessEnv),
+      () => geminiModelConfig({ GEMINI_MODEL: "gemini-3.8-flash?key=secret" } as unknown as NodeJS.ProcessEnv),
       /not a valid id/,
     );
   });
@@ -99,15 +99,16 @@ describe("redactVisionLog", () => {
 });
 
 describe("identifyGemini", () => {
-  it("retries 503 and then reads the card JSON, skipping thought text", async () => {
+  it("retries a 503 once immediately and then reads the card JSON, skipping thought text", async () => {
     const sleeps: number[] = [];
-    const statuses = [503, 503, 200];
+    const statuses = [503, 200];
     let calls = 0;
     const logs: string[] = [];
     const fetchImpl = mockFetch((url, init) => {
       calls += 1;
       assert.equal(url.includes(SECRET), true);
       assert.match(url, /models\/gemini-3\.8-flash:generateContent/);
+      assert.ok(init?.signal);
       const body = JSON.parse(String(init?.body)) as {
         generationConfig?: { thinkingConfig?: { thinkingLevel?: string } };
       };
@@ -123,7 +124,7 @@ describe("identifyGemini", () => {
     });
 
     const card = await identifyGemini(Buffer.from("img"), "image/jpeg", {
-      env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as NodeJS.ProcessEnv,
+      env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
       fetchImpl,
       sleepImpl: async (ms) => {
         sleeps.push(ms);
@@ -132,15 +133,62 @@ describe("identifyGemini", () => {
     });
 
     assert.equal(card.name, "Charizard");
-    assert.equal(calls, 3);
-    assert.deepEqual(sleeps, [...GEMINI_RETRY_DELAYS_MS]);
-    assert.equal(logs.length, 2);
-    for (const line of logs) {
-      assert.match(line, /model=gemini-3\.8-flash status=503/);
-      assert.match(line, /high demand/);
-      assert.equal(line.includes(SECRET), false);
-      assert.match(line, /key=\[redacted\]/);
-    }
+    assert.equal(calls, GEMINI_MAX_ATTEMPTS);
+    assert.deepEqual(sleeps, []);
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /model=gemini-3\.8-flash status=503/);
+    assert.match(logs[0], /high demand/);
+    assert.equal(logs[0].includes(SECRET), false);
+    assert.match(logs[0], /key=\[redacted\]/);
+  });
+
+  it("does not take a second 503 retry", async () => {
+    let calls = 0;
+    const fetchImpl = mockFetch(() => {
+      calls += 1;
+      return new Response(googleError(503, "high demand"), { status: 503 });
+    });
+    await assert.rejects(
+      () =>
+        identifyGemini(Buffer.from("img"), "image/jpeg", {
+          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
+          fetchImpl,
+          sleepImpl: async () => {
+            throw new Error("backoff");
+          },
+          log: () => {},
+        }),
+      /busy right now/,
+    );
+    assert.equal(calls, GEMINI_MAX_ATTEMPTS);
+  });
+
+  it("aborts a hung call and retries once without waiting out the route limit", async () => {
+    let calls = 0;
+    const fetchImpl = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<never>((_resolve, reject) => {
+          const abort = () => {
+            const error = new Error("The operation was aborted");
+            error.name = "AbortError";
+            reject(error);
+          };
+          if (init?.signal?.aborted) abort();
+          init?.signal?.addEventListener("abort", abort, { once: true });
+        });
+      }
+      return new Response(cardJson("Pikachu"), { status: 200 });
+    }) as typeof fetch;
+
+    const card = await identifyGemini(Buffer.from("img"), "image/jpeg", {
+      env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
+      fetchImpl,
+      timeoutMs: 30,
+      log: () => {},
+    });
+    assert.equal(card.name, "Pikachu");
+    assert.equal(calls, 2);
   });
 
   it("does not retry a 404 and tries the fallback model", async () => {
@@ -160,7 +208,7 @@ describe("identifyGemini", () => {
     });
 
     const card = await identifyGemini(Buffer.from("img"), "image/jpeg", {
-      env: { GEMINI_API_KEY: SECRET } as NodeJS.ProcessEnv,
+      env: { GEMINI_API_KEY: SECRET } as unknown as NodeJS.ProcessEnv,
       fetchImpl,
       sleepImpl: async (ms) => {
         sleeps.push(ms);
@@ -184,7 +232,7 @@ describe("identifyGemini", () => {
     await assert.rejects(
       () =>
         identifyGemini(Buffer.from("img"), "image/jpeg", {
-          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as NodeJS.ProcessEnv,
+          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
           fetchImpl,
           sleepImpl: async () => {},
           log: (line) => logs.push(line),
@@ -205,14 +253,14 @@ describe("identifyGemini", () => {
     await assert.rejects(
       () =>
         identifyGemini(Buffer.from("img"), "image/jpeg", {
-          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as NodeJS.ProcessEnv,
+          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
           fetchImpl,
           sleepImpl: async () => {},
           log: () => {},
         }),
       /busy right now/,
     );
-    assert.equal(calls, GEMINI_RETRY_DELAYS_MS.length + 1);
+    assert.equal(calls, GEMINI_MAX_ATTEMPTS);
   });
 });
 
