@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { noManualMatchMessage } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { lookupCards } from "@/lib/pokemon-tcg";
+import { prepareUploadImage } from "@/lib/prepare-upload";
 import { ocrCardImage } from "@/lib/server-ocr";
 import { VISION_UNAVAILABLE_NOTE, VISION_UNREAD_NOTE, withVisionFallbackNote } from "@/lib/vision-messages";
 import { identifyWithVision, redactVisionLog, visionProvider } from "@/lib/vision";
@@ -168,7 +169,18 @@ export async function POST(request: Request) {
       } satisfies IdentifyResponse);
     }
 
-    return NextResponse.json(await identifyFromImageBytes(bytes, mimeType));
+    let prepared;
+    try {
+      prepared = await prepareUploadImage(bytes);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not read that photo.";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    console.info(
+      `[identify] photo ${bytes.length}B ${mimeType} -> ${prepared.bytes.length}B ${prepared.width}x${prepared.height} jpeg`,
+    );
+
+    return NextResponse.json(await identifyFromImageBytes(prepared.bytes, prepared.mimeType));
   } catch (error) {
     const message = error instanceof Error ? error.message : "Identify failed";
     return NextResponse.json({ error: message, message: READ_FAIL_MESSAGE }, { status: 500 });
