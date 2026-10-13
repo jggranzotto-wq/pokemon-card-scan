@@ -60,7 +60,7 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 | `DATABASE_SSL` | `1` on Railway's public proxy. Localhost stays off. |
 | `COLLECTION_PASSWORD` | Locks the collection API. Set this before the URL is public. |
 | `SESSION_SECRET` | Signs thumbnail URLs and the eBay OAuth `state`. |
-| `CRON_SECRET` | Authorizes `POST /api/jobs/refresh-prices`. |
+| `CRON_SECRET` | Authorizes `POST /api/jobs/refresh-prices` and `POST /api/jobs/warm-image-hashes`. |
 | `COLLECTION_TIMEZONE` | Day boundary for history. Default `America/Toronto`. |
 | `OPENAI_API_KEY` | Optional photo ID (`gpt-4o-mini`). Used before Gemini when set. |
 | `GEMINI_API_KEY` | Optional photo ID when `OPENAI_API_KEY` is unset. |
@@ -90,7 +90,9 @@ The phone can still store an eBay App ID for the scan screen's live sold search 
 
 Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. `/api/identify` first turns the upload into a JPEG whose long edge is at most 1600px at quality 0.85. Each Gemini call aborts after 12 seconds. A 503 is retried once immediately, with no extra wait, then `GEMINI_FALLBACK_MODEL` gets the same single retry. A 429 means the free quota is used up: the server does not retry and does not call the fallback model. The response says the photo-recognition quota is used up, then continues with the free matcher. Vision stops within about 26 seconds so that matcher can still finish inside the route limit. The server logs the HTTP status and Google's error text, and never the API key.
 
-When Gemini is skipped or cannot read a name, the server OCRs the photo and searches the free pokemontcg.io catalog. A wrong collector number does not hide the name: every printing of that species is included, up to 250, including ex and V cards, and an `NNN/NNN` number is searched on its own. The card is cropped and straightened, then the artwork is compared with a difference hash, a DCT hash, and a color histogram. Those signatures are cached in Postgres (`catalog_image_hashes`). A card is selected only when that match is strong and clearly ahead of the next printing. Otherwise the closest cards are shown with thumbnails. If the read is too weak to narrow the catalog, the response is "Couldn't read the card clearly. Search by name." and the scan screen opens Find by name. No paid API is used for this fallback.
+When Gemini is skipped or cannot read a name, the server OCRs the photo and searches the free pokemontcg.io catalog. A wrong collector number does not hide the name: every printing of that species is included, up to 250, and the search always adds `ex`, `V`, `VMAX`, `VSTAR`, and `GX` printings so a long list of plain names cannot crowd them out. An `NNN/NNN` number is searched on its own. The card is cropped and straightened, then the artwork is compared with a difference hash, a DCT hash, and a color histogram. Each returned candidate includes `imageScore` (1 is the same art). A card is selected only when that match is strong and clearly ahead of the next printing. Otherwise the closest cards are shown with thumbnails and the message "Tap the closest card, or search by name."
+
+If the OCR name confidence is low, or the best art score is weak, the photo is also compared with a broad pool: popular chase cards (including Charizard ex sv3-223) plus precomputed hashes for sets released in the last two years. The image score can outrank the OCR name, so a misread such as Infernape does not hide the card in the photo. Those signatures are cached in Postgres (`catalog_image_hashes`). Fill the cache with `npm run warm-image-hashes`, or `POST /api/jobs/warm-image-hashes` with `Authorization: Bearer $CRON_SECRET`. Each run stores up to 400 new hashes and skips ones already cached, so a daily cron can walk the recent sets. If the read is too weak to narrow the catalog and the broad pool also finds nothing, the response is "Couldn't read the card clearly. Search by name." and the scan screen opens Find by name. No paid API is used for this fallback.
 
 ## Collectr
 
@@ -137,7 +139,7 @@ Cheap shape: one web service, one Postgres, one cron.
 4. The repo includes `railway.toml` (Nixpacks, `npm run start`, health check `/api/status`).
 5. Add a second service from the same repo with start command `npm run refresh-prices` and a cron schedule of `0 12 * * *` (12:00 UTC, morning in Canada). Give it the same `DATABASE_URL` and price-source keys. It does not need to listen on a port.
 
-The HTTP cron route is the alternative if you only want one service: schedule `POST /api/jobs/refresh-prices` with `Authorization: Bearer $CRON_SECRET`.
+The HTTP cron route is the alternative if you only want one service: schedule `POST /api/jobs/refresh-prices` with `Authorization: Bearer $CRON_SECRET`. The same secret authorizes `POST /api/jobs/warm-image-hashes`, which precomputes catalog art hashes for the free photo matcher.
 
 Do not put secrets in git. Railway variables are the right place.
 

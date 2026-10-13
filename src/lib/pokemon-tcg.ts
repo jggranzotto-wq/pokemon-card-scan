@@ -1,7 +1,7 @@
 import type { CardLanguage, CatalogSet, ExtractedCard, PokemonCard } from "../types/card";
 import { preferDisplaySetName } from "./catalog";
 import { yearFromReleaseDate } from "./card-year";
-import { catalogNameToken, collectorMatches, fuzzyNameQuery, OCR_CANDIDATE_CAP, selectOcrPool } from "./ocr-match";
+import { catalogNameToken, collectorMatches, fuzzyNameQuery, OCR_CANDIDATE_CAP, selectOcrPool, variantNameQueries } from "./ocr-match";
 import { englishNameFromJapanese, inferSetFromText, japaneseNameForEnglish } from "./ocr-parse";
 
 const POKEMONTCG = "https://api.pokemontcg.io/v2";
@@ -228,7 +228,7 @@ function rememberSetYear(setId: string | undefined, releaseDate?: string | null)
   if (year) setYearById.set(setId, year);
 }
 
-async function fetchPokemonTcgSets(): Promise<Array<{ id: string; name: string; releaseDate?: string }>> {
+export async function listReleasedSets(): Promise<Array<{ id: string; name: string; releaseDate?: string }>> {
   const rows: Array<{ id: string; name: string; releaseDate?: string }> = [];
   for (let page = 1; page <= 4; page += 1) {
     const pokemon = await fetchJson<ApiList<{ id: string; name: string; releaseDate?: string }>>(
@@ -249,7 +249,7 @@ async function fetchPokemonTcgSets(): Promise<Array<{ id: string; name: string; 
 
 async function ensureSetYears(): Promise<void> {
   if (setYearById.size && Date.now() - setYearsAt < 24 * 60 * 60 * 1000) return;
-  const rows = await fetchPokemonTcgSets();
+  const rows = await listReleasedSets();
   for (const set of rows) rememberSetYear(set.id, set.releaseDate);
   setYearsAt = Date.now();
 }
@@ -260,7 +260,7 @@ export async function listCatalogSets(): Promise<CatalogSet[]> {
   }
 
   await listSetNames();
-  const [ptcgSets, enSets] = await Promise.all([fetchPokemonTcgSets(), fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`)]);
+  const [ptcgSets, enSets] = await Promise.all([listReleasedSets(), fetchJson<TcgdexSet[]>(`${TCGDEX}/en/sets`)]);
   const tcgdexById = new Map((enSets ?? []).map((set) => [set.id, set]));
   const seen = new Set<string>();
   const sets: CatalogSet[] = [];
@@ -470,6 +470,10 @@ function escapeLucene(value: string): string {
   return value.replace(/([+\-!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
+export async function listCardsInSet(setId: string, page = 1, pageSize = 50): Promise<PokemonCard[]> {
+  return searchPokemonTcg(`set.id:${escapeLucene(setId)}`, pageSize, page);
+}
+
 async function searchPokemonTcg(q: string, pageSize = 12, page = 1): Promise<PokemonCard[]> {
   const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`;
   const json = await fetchJson<ApiList<ApiCard>>(url, { headers: pokemonTcgHeaders() });
@@ -493,8 +497,9 @@ async function searchPages(search: CardSearch, query: string, cap: number): Prom
 /**
  * Free catalog search for an OCR read.
  * A wrong collector number must not hide the name: every printing of the fuzzy
- * name is included (Charizard ex, V, and the rest, capped), and an NNN/NNN
- * number is searched on its own.
+ * name is included, plus exact ex / V / VMAX / VSTAR / GX queries so those
+ * printings are hashed even when the plain name fills the first result pages.
+ * An NNN/NNN number is searched on its own.
  */
 export async function lookupOcrCandidates(extracted: ExtractedCard, search: CardSearch = searchPokemonTcg): Promise<PokemonCard[]> {
   const name = extracted.name?.trim();
@@ -512,6 +517,9 @@ export async function lookupOcrCandidates(extracted: ExtractedCard, search: Card
   };
 
   if (name && catalogNameToken(name)) {
+    for (const query of variantNameQueries(name)) {
+      add(await search(query, 50, 1));
+    }
     add(await searchPages(search, fuzzyNameQuery(name), OCR_CANDIDATE_CAP));
   }
   if (number && extracted.printedTotal) {

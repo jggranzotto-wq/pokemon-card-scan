@@ -10,6 +10,7 @@
     "test": "tsx --test src/lib/*.test.ts",
     "icons": "python3 scripts/generate-icons.py",
     "refresh-prices": "tsx scripts/refresh-prices.ts",
+    "warm-image-hashes": "tsx scripts/warm-image-hashes.ts",
     "android:www": "node scripts/export-android-www.mjs",
     "android:sync": "npm run android:www && npx cap sync android",
     "android:debug": "npm run android:sync && npm run android:assemble:debug",

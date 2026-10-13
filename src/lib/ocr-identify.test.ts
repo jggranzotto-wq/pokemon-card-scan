@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { identifyOcrPhoto } from "./ocr-identify";
-import { OCR_UNCLEAR_MESSAGE } from "./ocr-match";
+import { OCR_GUIDANCE_MESSAGE, OCR_UNCLEAR_MESSAGE } from "./ocr-match";
 import { VISION_QUOTA_NOTE } from "./vision-messages";
 import type { PokemonCard } from "../types/card";
 
@@ -50,5 +50,63 @@ describe("identifyOcrPhoto", () => {
     assert.deepEqual(result.candidates, []);
     assert.equal(result.autoSelectedId, undefined);
     assert.equal(result.message, OCR_UNCLEAR_MESSAGE);
+  });
+
+  it("hashes ex and V printings before plain names", async () => {
+    const ex = card("sv3-223", "Charizard ex", "223", "223/197");
+    const plain = card("base1-4", "Charizard", "4", "4/102");
+    const seen: string[] = [];
+    let broad = false;
+    await identifyOcrPhoto({
+      extracted: { name: "Charizard", collectorNumber: "7", confidence: 0.95 },
+      photo: Buffer.from("photo"),
+      lookup: async () => [plain, ex],
+      loadBroadCards: async () => {
+        broad = true;
+        return [];
+      },
+      distancesFor: async (_photo, cards) => {
+        seen.push(...cards.map((row) => row.id));
+        return new Map(cards.map((row) => [row.id, 30]));
+      },
+    });
+    assert.deepEqual(seen.slice(0, 2), ["sv3-223", "base1-4"]);
+    assert.equal(broad, true);
+  });
+
+  it("overrides a wrong OCR name when the broad image score is stronger", async () => {
+    const infernape = card("sv4-1", "Infernape", "1", "1/197");
+    const ex = card("sv3-223", "Charizard ex", "223", "223/197");
+    let broad = false;
+    const result = await identifyOcrPhoto({
+      extracted: { name: "Infernape", confidence: 0.92 },
+      photo: Buffer.from("photo"),
+      lookup: async () => [infernape],
+      loadBroadCards: async () => {
+        broad = true;
+        return [ex];
+      },
+      distancesFor: async (_photo, cards) => new Map(cards.map((row) => [row.id, row.id === "sv3-223" ? 16 : 41])),
+    });
+    assert.equal(broad, true);
+    assert.equal(result.candidates[0]?.id, "sv3-223");
+    assert.equal(result.autoSelectedId, "sv3-223");
+    assert.ok((result.candidates[0]?.imageScore ?? 0) > (result.candidates[1]?.imageScore ?? 0));
+  });
+
+  it("returns guidance when the image match is too close to auto-select", async () => {
+    const result = await identifyOcrPhoto({
+      extracted: { name: "Charizard", collectorNumber: "4", printedTotal: "102", confidence: 0.95 },
+      photo: Buffer.from("photo"),
+      lookup: async () => [charizard, other],
+      distancesFor: async () =>
+        new Map([
+          ["base1-4", 8],
+          ["base4-4", 10],
+        ]),
+    });
+    assert.equal(result.autoSelectedId, undefined);
+    assert.equal(result.message, OCR_GUIDANCE_MESSAGE);
+    assert.equal(result.candidates[0]?.id, "base1-4");
   });
 });

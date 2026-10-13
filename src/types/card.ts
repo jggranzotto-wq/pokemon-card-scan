@@ -49,6 +49,8 @@ export type PokemonCard = {
   language: CardLanguage;
   images: { small?: string; large?: string };
   variantHints: string[];
+  /** Art similarity to the uploaded photo, from 0 to 1. Higher is closer. */
+  imageScore?: number;
   tcgplayer?: {
     url?: string;
     printing?: string;

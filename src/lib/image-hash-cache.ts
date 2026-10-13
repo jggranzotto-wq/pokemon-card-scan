@@ -25,6 +25,38 @@ export async function readImageHash(cardId: string, imageUrl: string): Promise<s
   }
 }
 
+export type StoredImageHash = { cardId: string; imageUrl: string; dhash: string };
+
+export async function listImageHashes(): Promise<StoredImageHash[]> {
+  const byId = new Map<string, StoredImageHash>();
+  if (hasDatabase()) {
+    try {
+      const rows = await query<{ card_id: string; image_url: string; dhash: string }>(
+        `SELECT card_id, image_url, dhash FROM catalog_image_hashes`,
+      );
+      for (const row of rows) {
+        byId.set(row.card_id, { cardId: row.card_id, imageUrl: row.image_url, dhash: row.dhash });
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "cache list failed";
+      console.error(`[identify] image hash cache list failed (${detail})`);
+    }
+  }
+  for (const [storedKey, dhash] of memory) {
+    const splitAt = storedKey.indexOf("\n");
+    if (splitAt <= 0) continue;
+    const cardId = storedKey.slice(0, splitAt);
+    const imageUrl = storedKey.slice(splitAt + 1);
+    byId.set(cardId, { cardId, imageUrl, dhash });
+  }
+  return [...byId.values()];
+}
+
+/** Test helper. The identify process keeps hashes for its lifetime. */
+export function clearImageHashMemory(): void {
+  memory.clear();
+}
+
 export async function writeImageHash(cardId: string, imageUrl: string, dhash: string): Promise<void> {
   memory.set(key(cardId, imageUrl), dhash);
   if (!hasDatabase()) return;

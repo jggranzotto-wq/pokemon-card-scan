@@ -340,6 +340,8 @@ export function HomeApp() {
       return;
     }
 
+    const guidance = data.message && !isVisionFallbackMessage(data.message) ? data.message : null;
+    const noticeText = [data.notice ?? fallbackNote, guidance].filter(Boolean).join(" ");
     clearScanClock();
     commitSession(scan, {
       phase: "candidates",
@@ -347,7 +349,7 @@ export function HomeApp() {
       solds: null,
       selectedId: null,
       error: null,
-      notice: data.notice ?? fallbackNote,
+      notice: noticeText || null,
       manual: false,
       startedAt: null,
     });
@@ -736,11 +738,12 @@ export function HomeApp() {
                     <span>
                       <span className="block font-semibold">{card.name}</span>
                       <span className="block text-sm text-paper-mute">
-                        {[
+                        {                        [
                           card.printedNumber,
                           card.setName,
                           card.setYear ?? null,
                           card.rarity || "Unknown",
+                          card.imageScore != null ? `${Math.round(card.imageScore * 100)}% match` : null,
                         ]
                           .filter((part) => part != null && part !== "")
                           .join(" · ")}
