@@ -62,8 +62,10 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 | `SESSION_SECRET` | Signs thumbnail URLs and the eBay OAuth `state`. |
 | `CRON_SECRET` | Authorizes `POST /api/jobs/refresh-prices`. |
 | `COLLECTION_TIMEZONE` | Day boundary for history. Default `America/Toronto`. |
-| `OPENAI_API_KEY` | Optional photo ID (`gpt-4o-mini`). |
-| `GEMINI_API_KEY` | Optional vision fallback. |
+| `OPENAI_API_KEY` | Optional photo ID (`gpt-4o-mini`). Used before Gemini when set. |
+| `GEMINI_API_KEY` | Optional photo ID when `OPENAI_API_KEY` is unset. |
+| `GEMINI_MODEL` | Gemini model id. Default `gemini-3.8-flash` (stable, accepts a photo and returns JSON). `gemini-2.0-flash` is shut down. `gemini-2.5-flash` is limited to keys that already used it. |
+| `GEMINI_FALLBACK_MODEL` | Second model if the first one fails. Default `gemini-3.5-flash-lite`. Set it empty to skip the second model. |
 | `POKEMONTCG_API_KEY` | Optional higher pokemontcg.io limits. [Free key](https://dev.pokemontcg.io/). |
 | `USD_CAD_RATE` | Optional FX override. Otherwise Frankfurter's daily USD→CAD rate. |
 | `APP_PUBLIC_URL` | Public origin of this app. Used after eBay redirects back. |
@@ -85,6 +87,8 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 | `EBAY_FINDING_APP_ID` | Optional legacy Finding key if it differs from the Client ID. |
 
 The phone can still store an eBay App ID for the scan screen's live sold search (`card-scan.ebayAppId`). The daily job cannot see the phone, so put the same App ID in `EBAY_CLIENT_ID` on the server.
+
+Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. A 429 or 503 is retried twice with a short wait, then `GEMINI_FALLBACK_MODEL` is tried. The server logs the HTTP status and Google's error text, and never the API key. If photo recognition fails or does not return a card name, `/api/identify` reads the photo with OCR and says so in the response.
 
 ## Collectr
 

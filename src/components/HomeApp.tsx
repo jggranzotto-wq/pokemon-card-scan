@@ -19,6 +19,7 @@ import { TopNav } from "@/components/TopNav";
 import { apiUrl } from "@/lib/api-origin";
 import { parseCollectorInput } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
+import { isVisionFallbackMessage } from "@/lib/vision-messages";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
 import { createScanGuard } from "@/lib/scan-guard";
 import { soldsRequestBody } from "@/lib/solds-request";
@@ -41,6 +42,7 @@ export function HomeApp() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [extracted, setExtracted] = useState<ExtractedCard>({});
   const [candidates, setCandidates] = useState<PokemonCard[]>([]);
   const [selected, setSelected] = useState<PokemonCard | null>(null);
@@ -91,6 +93,7 @@ export function HomeApp() {
   function beginScan() {
     const scan = scansRef.current.begin();
     setError(null);
+    setNotice(null);
     setSolds(null);
     setSelected(null);
     setCandidates([]);
@@ -174,8 +177,11 @@ export function HomeApp() {
     setExtracted(extract);
     setCandidates(data.candidates ?? []);
     const auto = data.candidates?.find((card) => card.id === data.autoSelectedId) ?? null;
+    const fallbackNote =
+      data.message && isVisionFallbackMessage(data.message) ? data.message : null;
     if (auto) {
       setSelected(auto);
+      if (fallbackNote) setNotice(fallbackNote);
       await finishAfterIdentify(auto, extract, scan);
       return;
     }
@@ -189,7 +195,9 @@ export function HomeApp() {
     }
     if (!data.candidates?.length) {
       setError(data.message || READ_FAIL_MESSAGE);
+      return;
     }
+    if (fallbackNote) setNotice(fallbackNote);
   }
 
   async function finishAfterIdentify(
@@ -460,6 +468,9 @@ export function HomeApp() {
 
       {progress ? (
         <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-bolt">{progress}</p>
+      ) : null}
+      {notice ? (
+        <p className="mt-4 rounded-2xl bg-ink-card px-4 py-3 text-sm text-paper">{notice}</p>
       ) : null}
       {error ? (
         <p className="mt-4 rounded-2xl bg-coral/15 px-4 py-3 text-sm text-coral">{error}</p>
