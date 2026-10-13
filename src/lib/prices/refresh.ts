@@ -2,6 +2,7 @@ import { collectionDay } from "../day";
 import { query } from "../db";
 import { rememberFx, recomputeTotals, saveQuotes } from "../collection-store";
 import { usdCadRate } from "../fx";
+import { warmImageHashes, type WarmImageHashResult } from "../warm-image-hashes";
 import type { PriceInput, PriceQuote } from "./types";
 import { quoteCollectr } from "./collectr";
 import { quoteEbaySold } from "./ebay-sold";
@@ -67,7 +68,13 @@ export async function refreshCard(id: string, ebayAppId?: string): Promise<Price
   return quotes;
 }
 
-export async function refreshAllPrices(ebayAppId?: string): Promise<{ cards: number; day: string; failures: string[] }> {
+export async function refreshAllPrices(ebayAppId?: string): Promise<{
+  cards: number;
+  day: string;
+  failures: string[];
+  imageHashes?: WarmImageHashResult;
+  imageHashError?: string;
+}> {
   const targets = await loadTargets();
   const day = collectionDay();
   const failures: string[] = [];
@@ -83,5 +90,12 @@ export async function refreshAllPrices(ebayAppId?: string): Promise<{ cards: num
   const fx = await usdCadRate();
   await rememberFx(day, fx.rate, fx.label);
   await recomputeTotals(day);
-  return { cards: targets.length, day, failures };
+  try {
+    const imageHashes = await warmImageHashes();
+    return { cards: targets.length, day, failures, imageHashes };
+  } catch (error) {
+    const imageHashError = error instanceof Error ? error.message : "image hash warm failed";
+    console.error(`[refresh-prices] image hash warm failed (${imageHashError})`);
+    return { cards: targets.length, day, failures, imageHashError };
+  }
 }

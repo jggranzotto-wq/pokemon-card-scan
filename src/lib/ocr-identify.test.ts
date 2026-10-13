@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { chaseCard } from "./broad-pool";
 import { identifyOcrPhoto } from "./ocr-identify";
 import { OCR_GUIDANCE_MESSAGE, OCR_UNCLEAR_MESSAGE } from "./ocr-match";
 import { VISION_QUOTA_NOTE } from "./vision-messages";
@@ -92,6 +93,35 @@ describe("identifyOcrPhoto", () => {
     assert.equal(result.candidates[0]?.id, "sv3-223");
     assert.equal(result.autoSelectedId, "sv3-223");
     assert.ok((result.candidates[0]?.imageScore ?? 0) > (result.candidates[1]?.imageScore ?? 0));
+  });
+
+  it("fills in name, set, number, rarity, and price for a cached hash stub", async () => {
+    const full = {
+      ...card("sv3-223", "Charizard ex", "223", "223/197"),
+      setName: "Obsidian Flames",
+      setId: "sv3",
+      rarity: "Special Illustration Rare",
+      images: {
+        small: "https://images.pokemontcg.io/sv3/223.png",
+        large: "https://images.pokemontcg.io/sv3/223_hires.png",
+      },
+      tcgplayer: { marketUsd: 42 },
+    };
+    const result = await identifyOcrPhoto({
+      extracted: { name: "Infernape", confidence: 0.2 },
+      photo: Buffer.from("photo"),
+      lookup: async () => [],
+      loadBroadCards: async () => [chaseCard("sv3-223")],
+      hydrate: async (id) => (id === "sv3-223" ? full : null),
+      distancesFor: async (_photo, cards) => new Map(cards.map((row) => [row.id, 12])),
+    });
+    assert.equal(result.candidates[0]?.name, "Charizard ex");
+    assert.equal(result.candidates[0]?.setName, "Obsidian Flames");
+    assert.equal(result.candidates[0]?.printedNumber, "223/197");
+    assert.equal(result.candidates[0]?.rarity, "Special Illustration Rare");
+    assert.equal(result.candidates[0]?.images.large, "https://images.pokemontcg.io/sv3/223_hires.png");
+    assert.equal(result.candidates[0]?.tcgplayer?.marketUsd, 42);
+    assert.equal(result.autoSelectedId, "sv3-223");
   });
 
   it("returns guidance when the image match is too close to auto-select", async () => {
