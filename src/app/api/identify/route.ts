@@ -3,7 +3,8 @@ import { noManualMatchMessage } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { lookupCards } from "@/lib/pokemon-tcg";
 import { ocrCardImage } from "@/lib/server-ocr";
-import { identifyWithVision, visionProvider } from "@/lib/vision";
+import { VISION_UNAVAILABLE_NOTE, VISION_UNREAD_NOTE, withVisionFallbackNote } from "@/lib/vision-messages";
+import { identifyWithVision, redactVisionLog, visionProvider } from "@/lib/vision";
 import type { ExtractedCard, IdentifyResponse } from "@/types/card";
 
 export const runtime = "nodejs";
@@ -86,21 +87,24 @@ async function identifyFromExtracted(
 }
 
 async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<IdentifyResponse> {
+  let visionNote: string | null = null;
   if (visionProvider()) {
     try {
       const vision = await identifyWithVision(bytes, mimeType);
       if (isPlausibleCardName(vision?.name)) {
         return identifyFromExtracted(vision!, "vision");
       }
+      visionNote = VISION_UNREAD_NOTE;
+      console.error("[vision] photo recognition returned no card name; using OCR");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Vision failed";
-      return {
-        method: "vision",
-        extracted: {},
-        candidates: [],
-        visionAvailable: true,
-        message,
-      };
+      const detail = error instanceof Error ? error.message : "Vision failed";
+      console.error(
+        `[vision] photo recognition failed; using OCR (${redactVisionLog(detail, [
+          process.env.GEMINI_API_KEY,
+          process.env.OPENAI_API_KEY,
+        ])})`,
+      );
+      visionNote = VISION_UNAVAILABLE_NOTE;
     }
   }
 
@@ -118,7 +122,9 @@ async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<
       (japanese.language === "Japanese" && isPlausibleCardName(japanese.name));
     if (japaneseBetter) extracted = japanese;
   }
-  return identifyFromExtracted(extracted, "ocr");
+  const identified = await identifyFromExtracted(extracted, "ocr");
+  if (!visionNote) return identified;
+  return { ...identified, message: withVisionFallbackNote(visionNote, identified.message) };
 }
 
 export async function POST(request: Request) {

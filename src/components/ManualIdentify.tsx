@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { apiUrl } from "@/lib/api-origin";
 import { filterSetsByYear, mergeNameSuggestions } from "@/lib/catalog";
 import type { CatalogSet } from "@/types/card";
 
@@ -23,7 +24,7 @@ export function ManualIdentify({
   const debounceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    void fetch("/api/catalog", { cache: "no-store" })
+    void fetch(apiUrl("/api/catalog"), { cache: "no-store" })
       .then((res) => res.json())
       .then((data: CatalogPayload) => {
         if (Array.isArray(data.sets)) setCatalog(data);
@@ -40,7 +41,7 @@ export function ManualIdentify({
     }
     setSuggestions(mergeNameSuggestions(q, []));
     debounceRef.current = window.setTimeout(() => {
-      void fetch(`/api/catalog/suggest?q=${encodeURIComponent(q)}`, { cache: "no-store" })
+      void fetch(apiUrl(`/api/catalog/suggest?q=${encodeURIComponent(q)}`), { cache: "no-store" })
         .then((res) => res.json())
         .then((data: { names?: string[] }) => {
           if (Array.isArray(data.names)) setSuggestions(data.names);

@@ -1,5 +1,5 @@
-import { HomeApp } from "@/components/HomeApp";
+import { CollectionHome } from "@/components/CollectionHome";
 
 export default function HomePage() {
-  return <HomeApp />;
+  return <CollectionHome />;
 }
