@@ -1,7 +1,7 @@
 import type { CardLanguage, CatalogSet, ExtractedCard, PokemonCard } from "../types/card";
 import { preferDisplaySetName } from "./catalog";
 import { yearFromReleaseDate } from "./card-year";
-import { selectOcrPool } from "./ocr-match";
+import { catalogNameToken, collectorMatches, fuzzyNameQuery, OCR_CANDIDATE_CAP, selectOcrPool } from "./ocr-match";
 import { englishNameFromJapanese, inferSetFromText, japaneseNameForEnglish } from "./ocr-parse";
 
 const POKEMONTCG = "https://api.pokemontcg.io/v2";
@@ -470,14 +470,33 @@ function escapeLucene(value: string): string {
   return value.replace(/([+\-!(){}[\]^"~*?:\\/])/g, "\\$1");
 }
 
-async function searchPokemonTcg(q: string, pageSize = 12): Promise<PokemonCard[]> {
-  const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&pageSize=${pageSize}`;
+async function searchPokemonTcg(q: string, pageSize = 12, page = 1): Promise<PokemonCard[]> {
+  const url = `${POKEMONTCG}/cards?q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`;
   const json = await fetchJson<ApiList<ApiCard>>(url, { headers: pokemonTcgHeaders() });
   return json?.data?.map(toCard) ?? [];
 }
 
-/** Free catalog search narrowed by a fuzzy name and/or a collector number such as 223/197. */
-export async function lookupOcrCandidates(extracted: ExtractedCard): Promise<PokemonCard[]> {
+type CardSearch = (query: string, pageSize: number, page?: number) => Promise<PokemonCard[]>;
+
+async function searchPages(search: CardSearch, query: string, cap: number): Promise<PokemonCard[]> {
+  const pageSize = 50;
+  const out: PokemonCard[] = [];
+  for (let page = 1; out.length < cap && page <= 6; page++) {
+    const rows = await search(query, pageSize, page);
+    if (!rows.length) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out.slice(0, cap);
+}
+
+/**
+ * Free catalog search for an OCR read.
+ * A wrong collector number must not hide the name: every printing of the fuzzy
+ * name is included (Charizard ex, V, and the rest, capped), and an NNN/NNN
+ * number is searched on its own.
+ */
+export async function lookupOcrCandidates(extracted: ExtractedCard, search: CardSearch = searchPokemonTcg): Promise<PokemonCard[]> {
   const name = extracted.name?.trim();
   const number = extracted.collectorNumber?.trim();
   if (!name && !number) return [];
@@ -492,13 +511,16 @@ export async function lookupOcrCandidates(extracted: ExtractedCard): Promise<Pok
     }
   };
 
-  if (name && number) {
-    add(await searchPokemonTcg(`name:"${escapeLucene(name)}" number:"${escapeLucene(number)}"`, 16));
+  if (name && catalogNameToken(name)) {
+    add(await searchPages(search, fuzzyNameQuery(name), OCR_CANDIDATE_CAP));
   }
-  if (name) add(await searchPokemonTcg(`name:"${escapeLucene(name)}"`, 16));
-  if (number) add(await searchPokemonTcg(`number:"${escapeLucene(number)}"`, 40));
-  if (name) add(await searchTcgdex(extracted));
-  return selectOcrPool(out, extracted, 12);
+  if (number && extracted.printedTotal) {
+    const numbered = await searchPages(search, `number:"${escapeLucene(number)}"`, 100);
+    add(numbered.filter((card) => collectorMatches(card, extracted)));
+  } else if (number && !name) {
+    add(await searchPages(search, `number:"${escapeLucene(number)}"`, 40));
+  }
+  return selectOcrPool(out, extracted, OCR_CANDIDATE_CAP);
 }
 
 async function searchTcgdex(extracted: ExtractedCard): Promise<PokemonCard[]> {

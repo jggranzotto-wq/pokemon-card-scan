@@ -1,15 +1,23 @@
+import { POKEMON_NAMES } from "./pokemon-names";
 import type { ExtractedCard, PokemonCard } from "../types/card";
 
 export const OCR_UNCLEAR_MESSAGE = "Couldn't read the card clearly. Search by name.";
 
-/** Hamming distance at or below this, and clearly ahead of the next card, auto-selects. */
-export const STRONG_HASH_DISTANCE = 14;
+/** How many printings of a fuzzy name are hashed. */
+export const OCR_CANDIDATE_CAP = 250;
 
-/** The next card must be at least this many bits worse before the best one is chosen. */
-export const STRONG_HASH_MARGIN = 5;
+/** Thumbnails shown when the image match is not clear enough to select. */
+export const OCR_THUMBNAIL_LIMIT = 8;
 
-/** Farther than this, a name-only or number-only guess is not shown. */
-export const WEAK_HASH_DISTANCE = 28;
+/**
+ * Combined art-hash distance (0–64) at or below this can auto-select.
+ * Tuned on a 4000px perspective/blur photo of sv3-223, which lands near 18
+ * while the next Charizard printing is near 29.
+ */
+export const STRONG_HASH_DISTANCE = 22;
+
+/** The next card must be at least this much worse before the best one is chosen. */
+export const STRONG_HASH_MARGIN = 8;
 
 function normalizeName(value: string): string {
   return value
@@ -38,6 +46,29 @@ function levenshtein(a: string, b: string): number {
   return row[b.length];
 }
 
+/** Species token for a catalog wildcard, correcting a one-character OCR miss. */
+export function catalogNameToken(name: string): string {
+  const first = normalizeName(name).split(" ")[0] ?? "";
+  const token = first.replace(/[^a-z0-9]/g, "");
+  if (token.length < 4) return token;
+  let best = token;
+  let bestDist = 2;
+  for (const species of POKEMON_NAMES) {
+    const candidate = species.toLowerCase().split(/[^a-z0-9]+/)[0] ?? "";
+    if (!candidate || Math.abs(candidate.length - token.length) > 1) continue;
+    const dist = levenshtein(token, candidate);
+    if (dist < bestDist) {
+      best = candidate;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+export function fuzzyNameQuery(name: string): string {
+  return `name:${catalogNameToken(name)}*`;
+}
+
 export function namesAreFuzzyMatch(cardName: string, readName: string): boolean {
   const card = normalizeName(cardName);
   const read = normalizeName(readName);
@@ -57,7 +88,7 @@ export function collectorMatches(card: PokemonCard, extracted: ExtractedCard): b
   return card.printedNumber.toLowerCase().endsWith(`/${total}`) || card.setId.toLowerCase() === total;
 }
 
-export function selectOcrPool(cards: PokemonCard[], extracted: ExtractedCard, limit = 12): PokemonCard[] {
+export function selectOcrPool(cards: PokemonCard[], extracted: ExtractedCard, limit = OCR_CANDIDATE_CAP): PokemonCard[] {
   const both: PokemonCard[] = [];
   const numberOnly: PokemonCard[] = [];
   const nameOnly: PokemonCard[] = [];
@@ -85,8 +116,8 @@ export function matchScore(card: PokemonCard, extracted: ExtractedCard, distance
     ocr += normalizeName(card.name) === normalizeName(extracted.name) ? 0.55 : 0.35;
   }
   if (collectorMatches(card, extracted)) ocr += extracted.printedTotal ? 0.45 : 0.3;
-  const image = distance == null ? 0.25 : 1 - distance / 64;
-  return ocr * 0.45 + image * 0.55;
+  const image = distance == null ? 0.2 : 1 - distance / 64;
+  return ocr * 0.25 + image * 0.75;
 }
 
 export function decideOcrIdentification(input: {
@@ -107,7 +138,7 @@ export function decideOcrIdentification(input: {
     return { candidates: both.slice(0, 8) };
   }
 
-  const pool = selectOcrPool(input.cards, extracted);
+  const pool = selectOcrPool(input.cards, extracted, OCR_CANDIDATE_CAP);
   if (!pool.length) return { candidates: [], message: OCR_UNCLEAR_MESSAGE };
 
   const distances = input.distances ?? new Map<string, number>();
@@ -117,17 +148,13 @@ export function decideOcrIdentification(input: {
   const top = ranked[0];
   const second = ranked[1];
   const topDistance = distances.get(top.id);
-  if (topDistance != null && topDistance > WEAK_HASH_DISTANCE && !bothMatch(top, extracted)) {
-    return { candidates: [], message: OCR_UNCLEAR_MESSAGE };
-  }
-
   const secondDistance = second ? distances.get(second.id) : undefined;
   const strong =
     topDistance != null &&
     topDistance <= STRONG_HASH_DISTANCE &&
     (secondDistance == null || secondDistance >= topDistance + STRONG_HASH_MARGIN);
   return {
-    candidates: ranked.slice(0, 8),
+    candidates: ranked.slice(0, OCR_THUMBNAIL_LIMIT),
     autoSelectedId: strong ? top.id : undefined,
   };
 }
