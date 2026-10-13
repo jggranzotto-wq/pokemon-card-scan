@@ -18,7 +18,7 @@ const nextConfig: NextConfig = {
         images: { unoptimized: true, remotePatterns },
       }
     : {
-        serverExternalPackages: ["tesseract.js", "pg"],
+        serverExternalPackages: ["tesseract.js", "pg", "sharp"],
         images: { remotePatterns },
         async headers() {
           return [

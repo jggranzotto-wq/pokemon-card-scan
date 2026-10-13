@@ -88,7 +88,7 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 
 The phone can still store an eBay App ID for the scan screen's live sold search (`card-scan.ebayAppId`). The daily job cannot see the phone, so put the same App ID in `EBAY_CLIENT_ID` on the server.
 
-Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. Each Gemini call aborts after 12 seconds. A 429 or 503 is retried once immediately, with no extra wait, then `GEMINI_FALLBACK_MODEL` gets the same single retry. Vision stops within about 26 seconds so OCR can still finish inside the route limit. The server logs the HTTP status and Google's error text, and never the API key. If photo recognition fails or does not return a card name, `/api/identify` reads the photo with OCR and says so in the response.
+Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. `/api/identify` first turns the upload into a JPEG whose long edge is at most 1600px at quality 0.85, then sends that file to Gemini and to OCR. Each Gemini call aborts after 12 seconds. A 429 or 503 is retried once immediately, with no extra wait, then `GEMINI_FALLBACK_MODEL` gets the same single retry. Vision stops within about 26 seconds so OCR can still finish inside the route limit. The server logs the HTTP status and Google's error text, and never the API key. If photo recognition fails or does not return a card name, `/api/identify` reads the photo with OCR and says so in the response.
 
 ## Collectr
 
