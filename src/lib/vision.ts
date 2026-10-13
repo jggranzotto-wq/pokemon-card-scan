@@ -25,8 +25,17 @@ export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 export const DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-3.5-flash-lite";
 /** Abort each Gemini HTTP call so a hung 503 cannot consume the route. */
 export const GEMINI_CALL_TIMEOUT_MS = 12_000;
-/** First try plus one immediate retry. No extra attempts and no backoff sleep. */
+/** First try plus one immediate retry for a busy 503. A 429 does not retry. */
 export const GEMINI_MAX_ATTEMPTS = 2;
+
+/** Gemini refused the call because the free quota is exhausted. */
+export class VisionQuotaError extends Error {
+  readonly status = 429;
+  constructor() {
+    super("Photo recognition quota is used up.");
+    this.name = "VisionQuotaError";
+  }
+}
 /**
  * Shared ceiling for every model. Two 12s attempts fit, then OCR still has
  * time inside the identify route's 60s maxDuration.
@@ -264,7 +273,8 @@ export async function requestGeminiModel(
     const errorMessage = providerErrorMessage(body, secrets);
     logVision(`[vision] gemini model=${model} status=${res.status} error=${errorMessage}`, secrets, log);
     last = { ok: false, status: res.status, errorMessage };
-    if ((res.status !== 429 && res.status !== 503) || attempt + 1 >= GEMINI_MAX_ATTEMPTS) return last;
+    if (res.status === 429) return last;
+    if (res.status !== 503 || attempt + 1 >= GEMINI_MAX_ATTEMPTS) return last;
   }
 
   return last;
@@ -296,6 +306,7 @@ export async function identifyGemini(
     });
     if (!result.ok) {
       lastStatus = result.status;
+      if (result.status === 429) break;
       continue;
     }
     try {
@@ -310,6 +321,7 @@ export async function identifyGemini(
     }
   }
 
+  if (lastStatus === 429) throw new VisionQuotaError();
   throw new Error(readableVisionFailure(lastStatus));
 }
 

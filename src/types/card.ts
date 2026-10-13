@@ -67,6 +67,8 @@ export type IdentifyResponse = {
   autoSelectedId?: string;
   visionAvailable: boolean;
   message?: string;
+  /** Shown above the result, for example when the Gemini quota is used up. */
+  notice?: string;
 };
 
 export type GradeLabel = string;

@@ -84,6 +84,13 @@ CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS catalog_image_hashes (
+  card_id TEXT PRIMARY KEY,
+  image_url TEXT NOT NULL,
+  dhash TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 let pool: Pool | null = null;

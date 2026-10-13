@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { noManualMatchMessage } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { lookupCards } from "@/lib/pokemon-tcg";
+import { identifyOcrPhoto } from "@/lib/ocr-identify";
 import { prepareUploadImage } from "@/lib/prepare-upload";
 import { ocrCardImage } from "@/lib/server-ocr";
-import { VISION_UNAVAILABLE_NOTE, VISION_UNREAD_NOTE, withVisionFallbackNote } from "@/lib/vision-messages";
-import { identifyWithVision, redactVisionLog, visionProvider } from "@/lib/vision";
+import { VISION_QUOTA_NOTE, VISION_UNAVAILABLE_NOTE, VISION_UNREAD_NOTE } from "@/lib/vision-messages";
+import { identifyWithVision, redactVisionLog, VisionQuotaError, visionProvider } from "@/lib/vision";
 import type { ExtractedCard, IdentifyResponse } from "@/types/card";
 
 export const runtime = "nodejs";
@@ -98,14 +99,19 @@ async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<
       visionNote = VISION_UNREAD_NOTE;
       console.error("[vision] photo recognition returned no card name; using OCR");
     } catch (error) {
-      const detail = error instanceof Error ? error.message : "Vision failed";
-      console.error(
-        `[vision] photo recognition failed; using OCR (${redactVisionLog(detail, [
-          process.env.GEMINI_API_KEY,
-          process.env.OPENAI_API_KEY,
-        ])})`,
-      );
-      visionNote = VISION_UNAVAILABLE_NOTE;
+      if (error instanceof VisionQuotaError) {
+        visionNote = VISION_QUOTA_NOTE;
+        console.error("[vision] quota used up; matching the photo without another model");
+      } else {
+        const detail = error instanceof Error ? error.message : "Vision failed";
+        console.error(
+          `[vision] photo recognition failed; using OCR (${redactVisionLog(detail, [
+            process.env.GEMINI_API_KEY,
+            process.env.OPENAI_API_KEY,
+          ])})`,
+        );
+        visionNote = VISION_UNAVAILABLE_NOTE;
+      }
     }
   }
 
@@ -123,9 +129,12 @@ async function identifyFromImageBytes(bytes: Buffer, mimeType: string): Promise<
       (japanese.language === "Japanese" && isPlausibleCardName(japanese.name));
     if (japaneseBetter) extracted = japanese;
   }
-  const identified = await identifyFromExtracted(extracted, "ocr");
-  if (!visionNote) return identified;
-  return { ...identified, message: withVisionFallbackNote(visionNote, identified.message) };
+  return identifyOcrPhoto({
+    extracted,
+    photo: bytes,
+    notice: visionNote,
+    visionAvailable: Boolean(visionProvider()),
+  });
 }
 
 export async function POST(request: Request) {
@@ -141,6 +150,14 @@ export async function POST(request: Request) {
       }
       if (body.extracted?.name && !extracted.name) {
         extracted.name = isPlausibleCardName(body.extracted.name) ? body.extracted.name : undefined;
+      }
+      if (body.text && !body.extracted) {
+        return NextResponse.json(
+          await identifyOcrPhoto({
+            extracted,
+            visionAvailable: Boolean(visionProvider()),
+          }),
+        );
       }
       return NextResponse.json(await identifyFromExtracted(extracted, "text"));
     }

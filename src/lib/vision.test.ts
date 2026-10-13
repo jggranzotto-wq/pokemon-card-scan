@@ -15,6 +15,7 @@ import {
   identifyGemini,
   providerErrorMessage,
   redactVisionLog,
+  VisionQuotaError,
 } from "./vision";
 
 const SECRET = "AIzaSyTESTKEYSHOULDNOTLEAK99";
@@ -244,23 +245,25 @@ describe("identifyGemini", () => {
     assert.equal(logs[0].includes(SECRET), false);
   });
 
-  it("retries 429 on the primary model before giving up", async () => {
-    let calls = 0;
-    const fetchImpl = mockFetch(() => {
-      calls += 1;
-      return new Response(googleError(429, "rate limit"), { status: 429 });
+  it("stops on a 429 without retrying or calling the fallback model", async () => {
+    const models: string[] = [];
+    const fetchImpl = mockFetch((url) => {
+      models.push(url.match(/models\/([^:]+):/)?.[1] ?? "");
+      return new Response(googleError(429, "quota"), { status: 429 });
     });
     await assert.rejects(
       () =>
         identifyGemini(Buffer.from("img"), "image/jpeg", {
-          env: { GEMINI_API_KEY: SECRET, GEMINI_FALLBACK_MODEL: "" } as unknown as NodeJS.ProcessEnv,
+          env: { GEMINI_API_KEY: SECRET } as unknown as NodeJS.ProcessEnv,
           fetchImpl,
-          sleepImpl: async () => {},
+          sleepImpl: async () => {
+            throw new Error("waited");
+          },
           log: () => {},
         }),
-      /busy right now/,
+      (error: unknown) => error instanceof VisionQuotaError,
     );
-    assert.equal(calls, GEMINI_MAX_ATTEMPTS);
+    assert.deepEqual(models, ["gemini-3.8-flash"]);
   });
 });
 
