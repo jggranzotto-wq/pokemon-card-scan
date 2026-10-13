@@ -1,72 +1,181 @@
-# Pokémon Card Scan
+# TCG Card Scan
 
-Mobile-first PWA for Android Chrome: take a photo of a Pokémon TCG card, identify **name, collector number, set, year, and rarity** from the image plus official catalog data, then show **public market comparables** in **USD** plus an **approx CAD** conversion.
+Mobile collection tracker for a Canadian eBay seller. Take a photo of a Pokémon card, or search by name, year, and set, confirm the catalog match, and save it with a thumbnail and the details you sell from: name, year, set, collector number, variant, language, rarity, condition or grade, quantity, and an optional purchase price.
 
-Built for raw / ungraded Pokémon unless the photo is clearly a slab. No user account. No eBay login. An eBay Developer **App ID / Client ID** is optional if you want live eBay sold listings.
+Each saved card keeps **three prices**, refreshed on a daily job:
+
+| Source | What the number is | When it is blank |
+| --- | --- | --- |
+| TCGPlayer market | The printing that matches the saved variant, from the free pokemontcg.io snapshot. No paid TCGPlayer key. | The catalog has no market price for that printing. Shown as **No price**, not $0. |
+| Collectr | Partner API market price after you set `COLLECTR_API_KEY`. | **Not connected** until that key is set. The app does not scrape Collectr and does not invent a number. |
+| eBay last sold | The most recent **sold** listing whose title matches the card. | **Not connected** until eBay grants Marketplace Insights, or a legacy Finding App ID actually returns sold rows. Active Browse listings are not used as a sold price. |
+
+The home screen totals each source on its own, in **US$** and an estimated **CA$**, plus the change since yesterday once two days exist. CA$ is converted from US$ with a public daily FX rate (Frankfurter) and labeled as an estimate.
+
+The Android package is still **TCG Card Scan**, `com.midnightman.cardscan`. Install the site as a PWA, or build the Capacitor wrapper. The wrapper is a static UI that calls a hosted Next.js server.
 
 ## Run it
 
 ```bash
 npm install
+docker compose up -d   # or any local Postgres
+cp .env.example .env.local
+# set DATABASE_URL=postgres://cardscan:cardscan@localhost:5432/cardscan
 npm run dev
 ```
 
-Then open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). On Android Chrome, use the computer's LAN IP. `npm run dev` binds to `0.0.0.0`. Then Chrome menu → **Add to Home screen**.
 
-### On your phone (same Wi‑Fi)
+Scanning and public comps still work if `DATABASE_URL` is empty. Saving a card, totals, history, and eBay seller login need Postgres.
 
-1. Find your computer’s LAN IP (`ipconfig` / `ifconfig` / `ip addr`).
-2. On Android Chrome, open `http://YOUR-LAN-IP:3000`.
-3. On first launch, paste your eBay App ID and tap **Save**, or tap **Scan without eBay for now**.
-4. Grant camera access when prompted.
-5. Optional: Chrome menu → **Add to Home screen**.
+### Collection password
 
-`npm run dev` already binds to `0.0.0.0` so the phone can reach it.
+On localhost the API is open when `COLLECTION_PASSWORD` is unset. On any shared or public host, set `COLLECTION_PASSWORD` and enter the same value under **Settings** on the phone. The phone keeps it in `localStorage` (`card-scan.collectionToken`) and sends it as `Authorization: Bearer`.
 
-## eBay App ID (first screen)
+## Daily prices
 
-The first screen asks for an App ID. You can **Save** it, or tap **Scan without eBay for now** to open the camera immediately.
+The web app stores one history row per card, per source, per seller-local day (`COLLECTION_TIMEZONE`, default `America/Toronto`). Run the refresh once a day:
 
-1. Open [developer.ebay.com](https://developer.ebay.com/) and sign in.
-2. Open [Application Keys](https://developer.ebay.com/my/keys).
-3. Copy the Production **App ID (Client ID)** — not Cert ID, not your seller password.
-4. Paste it and tap Save when eBay approves it (often the next business day).
+```bash
+npm run refresh-prices
+```
 
-Skip remembers that you left setup, so the next launch goes to scan. Identification and public comps work with no App ID and no eBay login. After you save an App ID, live eBay sold listings are added when Finding accepts the key.
+That process reads `DATABASE_URL` and writes snapshots itself. It does not need the site to be up.
 
-The App ID is stored only in this browser’s `localStorage` (`card-scan.ebayAppId`). Nothing is committed to the repo. Change or clear it later with the settings gear or the footer links. It does **not** fall back to a hardcoded key or fake live solds.
+Or call the HTTP hook from a scheduler:
 
-## Identify + solds
+```bash
+curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://YOUR-HOST/api/jobs/refresh-prices
+```
 
-1. **Photo** — rear camera (`capture=environment`) or gallery. The file name is ignored (`card.jpg`).
-2. **Or find by name** — type the Pokémon / card name, pick a catalog **year** and **set**, optionally a collector number, then **Find this card**. No photo required. Years and set names come from pokemontcg.io / TCGdex. If several printings match, tap the one on your card.
-3. **Identify** — the photo is sent to `/api/identify`. Vision runs if those keys exist; otherwise the server reads the image with OCR (English and Japanese). Japanese names map to the English catalog name. Garbage OCR is never shown as the name. Missing catalog fields say **Unknown**. This step does not need an App ID.
-4. **Comparables** — always, after a successful ID. Keywords are the richer identity: **name + collector number + set**. Public TCGPlayer market prices come from pokemontcg.io (no user key). PriceCharting and eBay sold-search links are offered so you can tap through. Live eBay sold listings run only when an App ID is saved and Finding accepts it. Missing or unofficial cards say so instead of inventing a price. Each new photo starts a new scan and refreshes every identity field.
+`CRON_SECRET` is required. A manual **Refresh prices** button on the collection screen does the same job for the signed-in phone and can pass the on-device eBay App ID for that one run.
 
-## Optional environment variables
+## Environment variables
 
-Copy `.env.example` to `.env.local` if you want better photo ID. **None of these are required** for the app to run, and **eBay solds use the on-device App ID**, not a server env secret.
+Copy `.env.example` to `.env.local`. Do not commit real secrets.
 
 | Variable | Used for |
 | --- | --- |
-| `OPENAI_API_KEY` | Best photo ID (`gpt-4o-mini` vision) |
-| `GEMINI_API_KEY` | Vision fallback if OpenAI is unset |
-| `POKEMONTCG_API_KEY` | Higher pokemontcg.io rate limits ([free key](https://dev.pokemontcg.io/)) |
-| `USD_CAD_RATE` | Optional USD→CAD override. If unset, a public daily rate is fetched (Frankfurter) and labeled as approx. |
+| `DATABASE_URL` | Postgres. Required for the collection. |
+| `DATABASE_SSL` | `1` on Railway's public proxy. Localhost stays off. |
+| `COLLECTION_PASSWORD` | Locks the collection API. Set this before the URL is public. |
+| `SESSION_SECRET` | Signs thumbnail URLs and the eBay OAuth `state`. |
+| `CRON_SECRET` | Authorizes `POST /api/jobs/refresh-prices`. |
+| `COLLECTION_TIMEZONE` | Day boundary for history. Default `America/Toronto`. |
+| `OPENAI_API_KEY` | Optional photo ID (`gpt-4o-mini`). |
+| `GEMINI_API_KEY` | Optional vision fallback. |
+| `POKEMONTCG_API_KEY` | Optional higher pokemontcg.io limits. [Free key](https://dev.pokemontcg.io/). |
+| `USD_CAD_RATE` | Optional FX override. Otherwise Frankfurter's daily USD→CAD rate. |
+| `APP_PUBLIC_URL` | Public origin of this app. Used after eBay redirects back. |
+| `NEXT_PUBLIC_API_ORIGIN` | Hosted origin baked into the Android APK. |
+| `COLLECTR_API_KEY` | Collectr partner key from [getcollectr.com/api](https://getcollectr.com/api). |
+| `COLLECTR_API_BASE` | Host from Collectr's docs. Default `https://api.getcollectr.com`. |
+| `COLLECTR_SEARCH_PATH` | Default `/v1/catalog/search`. Change if their docs use another path. |
+| `COLLECTR_PRODUCT_PATH` | Default `/v1/catalog/products/{id}`. |
+| `EBAY_CLIENT_ID` | eBay App ID / Client ID. |
+| `EBAY_CLIENT_SECRET` | eBay Cert ID. |
+| `EBAY_RUNAME` | RuName whose Accept URL is `https://YOUR-HOST/api/ebay/callback`. |
+| `EBAY_ENV` | `sandbox` (default) or `production`. |
+| `EBAY_MARKETPLACE_ID` | Default `EBAY_US`. Use `EBAY_CA` to list in CA$. |
+| `EBAY_CATEGORY_ID` | Default `183454` (individual CCG cards on eBay US). |
+| `EBAY_COUNTRY` | Inventory location country. Default `CA`. |
+| `EBAY_POSTAL_CODE` | Required before a listing can publish. |
+| `EBAY_CITY` / `EBAY_STATE` | Optional location lines. |
+| `EBAY_PAYMENT_POLICY_ID`, `EBAY_RETURN_POLICY_ID`, `EBAY_FULFILLMENT_POLICY_ID` | Optional. Otherwise the first publish tries to create business policies. |
+| `EBAY_FINDING_APP_ID` | Optional legacy Finding key if it differs from the Client ID. |
+
+The phone can still store an eBay App ID for the scan screen's live sold search (`card-scan.ebayAppId`). The daily job cannot see the phone, so put the same App ID in `EBAY_CLIENT_ID` on the server.
+
+## Collectr
+
+Collectr does not publish a price feed. An API key exists only after you register at [getcollectr.com/api](https://getcollectr.com/api). Their terms forbid scraping, crawlers, and pulling prices from the app or from anyone who scraped it.
+
+Until `COLLECTR_API_KEY` is set, every Collectr row says **Not connected**. With a key, the adapter calls the partner host (Bearer token and `X-Api-Key`) and only keeps a product when the name, collector number, and set actually match. Set `COLLECTR_API_BASE` and the two path variables to whatever Collectr emails you if the defaults differ. A failed or unreadable response is an error, not a guessed price.
+
+## eBay last sold
+
+True sold history is eBay's **Marketplace Insights** API:
+
+`GET https://api.ebay.com/buy/marketplace_insights/v1_beta/item_sales/search`
+
+It needs a client-credentials token with scope `https://api.ebay.com/oauth/api_scope/buy.marketplace.insights`. eBay only enables that scope for approved applications. A normal developer key gets **403**. This app then shows **Not connected** and explains why. It does **not** fall back to the Browse API, because Browse returns active asking prices, not sold prices.
+
+If Marketplace Insights is refused, the adapter may use the legacy **Finding** `findCompletedItems` call with `SoldItemsOnly=true` when an App ID is present. Those rows are labeled **eBay last sold · Finding API**, not Marketplace Insights. eBay has been closing Finding for new keys, so a rejected App ID stays **Not connected**.
+
+Apply for Marketplace Insights from the eBay developer portal (Buy APIs, limited release). After approval, the same `EBAY_CLIENT_ID` and `EBAY_CLIENT_SECRET` start returning sold rows and the label switches to Marketplace Insights. The stored amount is the most recent matching sale. The detail line also shows the median of the matches.
+
+## List on eBay
+
+Listings use the Sell Inventory API (create inventory item, create offer, publish offer) with the seller's OAuth user token. Nothing posts until the review screen checkbox is on and the request body includes `confirm: true`.
+
+1. Create a keyset at [developer.ebay.com](https://developer.ebay.com/my/keys). Sandbox first.
+2. Set `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, and `EBAY_RUNAME`.
+3. In the developer portal, the RuName **Accept URL** must be `https://YOUR-HOST/api/ebay/callback`. Auth accepted URL can be the same.
+4. Set `EBAY_ENV=sandbox` and `EBAY_POSTAL_CODE`.
+5. In the app, **Settings → Connect eBay seller** and approve the sandbox user.
+6. Open a card → **List on eBay**, edit the title, price, and quantity, check the confirm box, then post.
+
+`EBAY_ENV` defaults to sandbox. Production posts a live listing and needs `EBAY_ENV=production` plus production keys and a production RuName. Suggested price comes from TCGPlayer, then eBay last sold, then Collectr. CA$ suggestions are the US$ amount times the FX rate and are labeled as an estimate. You type the final price.
+
+Business policies (payment, return, shipping) are created on first publish when their ids are not in the environment. eBay's sandbox often rejects a publish until those policies, the inventory location, and category condition descriptors are accepted. The app returns eBay's error and does not mark the card as listed when publish fails. A successful publish reduces the saved quantity.
+
+Shop name in the description is **the_midnightman**. There is no automatic listing and no automatic retry.
+
+## Deploy on Railway
+
+Cheap shape: one web service, one Postgres, one cron.
+
+1. New Railway project. Add the **Postgres** plugin. Copy `DATABASE_URL` onto the web service.
+2. Set `DATABASE_SSL=1` if the URL is the public proxy.
+3. Set `APP_PUBLIC_URL` to the web service URL, plus `COLLECTION_PASSWORD`, `SESSION_SECRET`, and `CRON_SECRET`.
+4. The repo includes `railway.toml` (Nixpacks, `npm run start`, health check `/api/status`).
+5. Add a second service from the same repo with start command `npm run refresh-prices` and a cron schedule of `0 12 * * *` (12:00 UTC, morning in Canada). Give it the same `DATABASE_URL` and price-source keys. It does not need to listen on a port.
+
+The HTTP cron route is the alternative if you only want one service: schedule `POST /api/jobs/refresh-prices` with `Authorization: Bearer $CRON_SECRET`.
+
+Do not put secrets in git. Railway variables are the right place.
+
+## Android (PWA and Capacitor)
+
+PWA: open the HTTPS site in Chrome and Add to Home screen. The service worker caches the shell only, not `/api`.
+
+Capacitor wrapper (Galaxy Store / sideload), package `com.midnightman.cardscan`, launcher name **TCG Card Scan**:
+
+```bash
+npm install
+export NEXT_PUBLIC_API_ORIGIN=https://YOUR-HOST
+export ANDROID_HOME=/path/to/Android/sdk
+npm run android:debug
+```
+
+Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
+
+`npm run android:www` statically exports the UI into `www/` and leaves the API on the hosted origin. JDK 21 matches the Capacitor Android project. Release signing stays in `android/keystore.properties`, which is gitignored. See `android/keystore.properties.example`.
+
+`CAPACITOR_SERVER_URL` is only for pointing the WebView at a live server during development. Do not ship a store build with it set.
 
 ## Scripts
 
 ```bash
-npm run dev      # local server, LAN-reachable
-npm run build    # production build
-npm start        # serve the production build
-npm test         # parser / money / sold-band unit tests
+npm run dev          # LAN-reachable Next.js
+npm run build        # production build
+npm start
+npm test             # parsers, price adapters, listing draft, Postgres when DATABASE_URL is set
+npm run refresh-prices
+npm run android:sync
+npm run android:debug
 ```
 
-## Deploy
+## What is still missing
 
-Any single Next.js host works (Vercel, Node, Docker). After deploy, open the HTTPS URL in Android Chrome, skip or paste an App ID, then Add to Home screen.
+- **Collectr prices** until you register and paste the key and, if needed, the base URL from their docs.
+- **Marketplace Insights sold prices** until eBay approves `buy.marketplace.insights`. Finding solds work only while eBay still accepts the App ID.
+- **Live eBay listings** until sandbox (or production) keys, RuName, postal code, and a completed seller consent are in place. Sandbox publish can still fail on business-policy or condition-descriptor rules; the error is shown and nothing is marked sold.
+- **eBay.ca category ids** if you set `EBAY_MARKETPLACE_ID=EBAY_CA`. The default category `183454` is the US individual-card category.
+- **Multi-user accounts.** This is one shop's database. The collection password is the lock.
+- **Graded Collectr / eBay descriptor ids** are best-effort. A graded condition is sent in the title and item specifics; if eBay rejects the condition descriptor, the message is returned instead of a fake success.
+- Photos you take are stored as a JPEG thumbnail in Postgres (600 KB max). eBay cannot fetch a password-protected thumbnail, so the listing uses the public catalog image when one exists.
 
 ## Privacy
 
-Photos go to this app’s `/api/identify` route (and to OpenAI or Gemini only if those keys are configured on the server). Public comps use pokemontcg.io / TCGdex. Your eBay App ID, if you add one, stays on the phone and is sent only to `/api/solds` so the server can call eBay Finding. There is no user account and no eBay login.
+Photos go to `/api/identify` and, only if those keys are set, to OpenAI or Gemini. Catalog data comes from pokemontcg.io and TCGdex. Price calls go to pokemontcg.io, Frankfurter, and to Collectr or eBay only when their keys are configured. Seller tokens live in Postgres, not in the repo. The on-device eBay App ID stays in `localStorage` and is sent only when you refresh or scan.

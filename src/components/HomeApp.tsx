@@ -14,6 +14,9 @@ import {
 import { CardIdentityPanel } from "@/components/CardIdentity";
 import { CompsPanel } from "@/components/CompsPanel";
 import { ManualIdentify } from "@/components/ManualIdentify";
+import { SaveCardForm } from "@/components/SaveCardForm";
+import { TopNav } from "@/components/TopNav";
+import { apiUrl } from "@/lib/api-origin";
 import { parseCollectorInput } from "@/lib/catalog";
 import { isPlausibleCardName, parseOcrText, READ_FAIL_MESSAGE } from "@/lib/ocr-parse";
 import { cardIdentity, hasCardIdentity, recognizedLabel } from "@/lib/recognized";
@@ -46,13 +49,14 @@ export function HomeApp() {
   const [appId, setAppId] = useState("");
   const [showSetup, setShowSetup] = useState(true);
   const [setupError, setSetupError] = useState<string | null>(null);
+  const [photo, setPhoto] = useState<Blob | null>(null);
 
   useEffect(() => {
     const saved = readEbayAppId();
     setAppId(saved);
     setShowSetup(shouldShowEbaySetupOnLaunch(saved, readEbaySetupSeen()));
     setReady(true);
-    void fetch("/api/status")
+    void fetch(apiUrl("/api/status"))
       .then((res) => res.json())
       .then(setStatus)
       .catch(() => setStatus(null));
@@ -103,7 +107,7 @@ export function HomeApp() {
 
       const form = new FormData();
       form.append("image", blob, "card.jpg");
-      const res = await fetch("/api/identify", { method: "POST", body: form, cache: "no-store" });
+      const res = await fetch(apiUrl("/api/identify"), { method: "POST", body: form, cache: "no-store" });
       const data = (await res.json()) as IdentifyResponse & { error?: string };
       if (!scansRef.current.isCurrent(scan)) return;
       if (!res.ok && data.message !== "ocr-required") {
@@ -141,7 +145,7 @@ export function HomeApp() {
         }
         if (!scansRef.current.isCurrent(scan)) return;
         setProgress("Matching the card…");
-        const ocrRes = await fetch("/api/identify", {
+        const ocrRes = await fetch(apiUrl("/api/identify"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           cache: "no-store",
@@ -210,7 +214,7 @@ export function HomeApp() {
     setPhase("working");
     const label = recognizedLabel(extract, card);
     setProgress(label ? `Recognized: ${label} — looking up comparables…` : "Looking up comparables…");
-    const res = await fetch("/api/solds", {
+    const res = await fetch(apiUrl("/api/solds"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
@@ -230,6 +234,7 @@ export function HomeApp() {
     if (!file) return;
     try {
       const blob = await compressImage(file);
+      setPhoto(blob);
       const url = URL.createObjectURL(blob);
       await identifyBlob(blob, url);
     } catch (err) {
@@ -242,9 +247,10 @@ export function HomeApp() {
   async function onSample() {
     const scan = beginScan();
     try {
+      setPhoto(null);
       setPreview(SAMPLE_CARD.image);
       setProgress("Matching sample card…");
-      const res = await fetch("/api/identify", {
+      const res = await fetch(apiUrl("/api/identify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -272,9 +278,10 @@ export function HomeApp() {
     const parsed = parseCollectorInput(input.number);
     const scan = beginScan();
     try {
+      setPhoto(null);
       setPreview(null);
       setProgress("Searching the catalog…");
-      const res = await fetch("/api/identify", {
+      const res = await fetch(apiUrl("/api/identify"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -359,6 +366,7 @@ export function HomeApp() {
 
   return (
     <main className="mx-auto min-h-dvh max-w-phone px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))]">
+      <TopNav active="scan" />
       <header className="mb-5">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -523,6 +531,24 @@ export function HomeApp() {
             setSetupError(null);
             setShowSetup(true);
           }}
+        />
+      ) : null}
+
+      {showIdentity && phase !== "working" && identity.name !== "Unknown" ? (
+        <SaveCardForm
+          catalogId={selected?.id}
+          name={selected?.name || extracted.name || identity.name}
+          setName={selected?.setName || extracted.set}
+          setId={selected?.setId || extracted.setId}
+          setYear={selected?.setYear ?? extracted.setYear ?? extracted.copyrightYear}
+          collectorNumber={selected?.number || extracted.collectorNumber}
+          printedNumber={selected?.printedNumber}
+          rarity={selected?.rarity}
+          variant={extracted.variant}
+          language={extracted.language || selected?.language}
+          condition={extracted.grade || undefined}
+          imageUrl={selected?.images.large || selected?.images.small}
+          photo={photo}
         />
       ) : null}
 

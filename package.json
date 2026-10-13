@@ -8,17 +8,30 @@
     "start": "next start",
     "lint": "next lint",
     "test": "tsx --test src/lib/*.test.ts",
-    "icons": "python3 scripts/generate-icons.py"
+    "icons": "python3 scripts/generate-icons.py",
+    "refresh-prices": "tsx scripts/refresh-prices.ts",
+    "android:www": "node scripts/export-android-www.mjs",
+    "android:sync": "npm run android:www && npx cap sync android",
+    "android:debug": "npm run android:sync && npm run android:assemble:debug",
+    "android:assemble:debug": "cd android && ./gradlew assembleDebug",
+    "android:assemble:release": "cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
+    "@capacitor/camera": "^8.2.5",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/splash-screen": "^8.0.2",
     "next": "^15.5.2",
+    "pg": "^8.23.1",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/cli": "^8.5.3",
     "@eslint/eslintrc": "^3.3.1",
     "@types/node": "^22.18.1",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
     "autoprefixer": "^10.4.21",

@@ -1,10 +1,12 @@
 import type { MetadataRoute } from "next";
 
+export const dynamic = "force-static";
+
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Pokémon Card Scan",
+    name: "TCG Card Scan",
     short_name: "Card Scan",
-    description: "Photo a Pokémon TCG card and check recent eBay solds.",
+    description: "Scan a Pokémon card, track the collection, and draft an eBay listing.",
     start_url: "/",
     scope: "/",
     display: "standalone",

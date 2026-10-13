@@ -118,4 +118,10 @@ export type StatusResponse = {
   visionProvider?: "openai" | "gemini";
   ebay: boolean;
   pokemonTcgKey: boolean;
+  database?: boolean;
+  collectionPassword?: boolean;
+  collectr?: "connected" | "not_connected";
+  ebaySold?: "insights" | "finding" | "not_connected";
+  ebaySell?: "sandbox" | "production" | "not_configured";
+  ebaySellerConnected?: boolean;
 };

@@ -1,5 +1,5 @@
-const CACHE = "card-scan-shell-v1";
-const SHELL = ["/", "/offline.html", "/icons/icon-192.png", "/icons/icon-512.png"];
+const CACHE = "card-scan-shell-v2";
+const SHELL = ["/", "/scan", "/settings", "/offline.html", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -29,6 +29,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/api/")) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

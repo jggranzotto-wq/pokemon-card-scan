@@ -3,13 +3,13 @@ import { RegisterSW } from "@/components/RegisterSW";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Pokémon Card Scan",
-  description: "Take a photo of a Pokémon card and see public market comparables.",
-  applicationName: "Card Scan",
+  title: "TCG Card Scan",
+  description: "Scan Pokémon cards, track the collection, and draft eBay listings.",
+  applicationName: "TCG Card Scan",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Card Scan",
+    title: "TCG Card Scan",
   },
   formatDetection: { telephone: false },
   icons: {
