@@ -131,7 +131,10 @@ export function CollectionHome() {
             id="collection-password"
             type="password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              writeCollectionToken(event.target.value);
+            }}
             className="mt-3 min-h-12 w-full rounded-2xl bg-ink px-3 ring-1 ring-ink-line"
           />
           <button type="submit" className="mt-3 min-h-12 w-full rounded-2xl bg-bolt font-semibold text-ink">

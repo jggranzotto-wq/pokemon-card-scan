@@ -570,7 +570,7 @@ async function hydrateCard(card: PokemonCard): Promise<PokemonCard> {
         rarity: detail.rarity || next.rarity,
         setYear: detail.setYear ?? next.setYear,
         setName: printedSetName(detail.setId || next.setId, detail.setName || next.setName),
-        images: detail.images.small ? detail.images : next.images,
+        images: detail.images?.small ? detail.images : next.images,
         tcgplayer: detail.tcgplayer ?? next.tcgplayer,
         variantHints: detail.variantHints.length ? detail.variantHints : next.variantHints,
       };

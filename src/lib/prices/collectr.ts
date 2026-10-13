@@ -1,10 +1,11 @@
 import { isGradedCondition } from "../card-fields";
+import { COLLECTR_REGISTER_URL, COLLECTR_TERMS_URL } from "../collectr-links";
 import { closedQuote, errorQuote, okQuote, type PriceInput, type PriceQuote } from "./types";
 
-export const COLLECTR_REGISTER_URL = "https://getcollectr.com/api";
+export { COLLECTR_REGISTER_URL, COLLECTR_TERMS_URL };
 
 export const COLLECTR_NOT_CONNECTED =
-  "Connect Collectr with an API key from getcollectr.com/api. There is no public Collectr price feed, and this app does not scrape Collectr.";
+  `Connect Collectr with an API key from ${COLLECTR_REGISTER_URL}. Terms: ${COLLECTR_TERMS_URL}. There is no public Collectr price feed, and this app does not scrape Collectr.`;
 
 type Product = {
   id: string;

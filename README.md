@@ -70,7 +70,7 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 | `USD_CAD_RATE` | Optional FX override. Otherwise Frankfurter's daily USD→CAD rate. |
 | `APP_PUBLIC_URL` | Public origin of this app. Used after eBay redirects back. |
 | `NEXT_PUBLIC_API_ORIGIN` | Hosted origin baked into the Android APK. |
-| `COLLECTR_API_KEY` | Collectr partner key from [getcollectr.com/api](https://getcollectr.com/api). |
+| `COLLECTR_API_KEY` | Collectr partner key from the [Collectr API portal](https://getcollectr.com/api). Terms: [Collectr API terms](https://getcollectr.com/api-terms-and-conditions.html). |
 | `COLLECTR_API_BASE` | Host from Collectr's docs. Default `https://api.getcollectr.com`. |
 | `COLLECTR_SEARCH_PATH` | Default `/v1/catalog/search`. Change if their docs use another path. |
 | `COLLECTR_PRODUCT_PATH` | Default `/v1/catalog/products/{id}`. |
@@ -88,11 +88,11 @@ Copy `.env.example` to `.env.local`. Do not commit real secrets.
 
 The phone can still store an eBay App ID for the scan screen's live sold search (`card-scan.ebayAppId`). The daily job cannot see the phone, so put the same App ID in `EBAY_CLIENT_ID` on the server.
 
-Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. A 429 or 503 is retried twice with a short wait, then `GEMINI_FALLBACK_MODEL` is tried. The server logs the HTTP status and Google's error text, and never the API key. If photo recognition fails or does not return a card name, `/api/identify` reads the photo with OCR and says so in the response.
+Photo recognition uses `gemini-3.8-flash` unless `GEMINI_MODEL` is set. That model thinks at `low` so a card photo does not use its medium default. Each Gemini call aborts after 12 seconds. A 429 or 503 is retried once immediately, with no extra wait, then `GEMINI_FALLBACK_MODEL` gets the same single retry. Vision stops within about 26 seconds so OCR can still finish inside the route limit. The server logs the HTTP status and Google's error text, and never the API key. If photo recognition fails or does not return a card name, `/api/identify` reads the photo with OCR and says so in the response.
 
 ## Collectr
 
-Collectr does not publish a price feed. An API key exists only after you register at [getcollectr.com/api](https://getcollectr.com/api). Their terms forbid scraping, crawlers, and pulling prices from the app or from anyone who scraped it.
+Collectr does not publish a price feed. An API key exists only after you register at the [Collectr API portal](https://getcollectr.com/api). The [API terms](https://getcollectr.com/api-terms-and-conditions.html) forbid scraping, crawlers, and pulling prices from the app or from anyone who scraped it.
 
 Until `COLLECTR_API_KEY` is set, every Collectr row says **Not connected**. With a key, the adapter calls the partner host (Bearer token and `X-Api-Key`) and only keeps a product when the name, collector number, and set actually match. Set `COLLECTR_API_BASE` and the two path variables to whatever Collectr emails you if the defaults differ. A failed or unreadable response is an error, not a guessed price.
 

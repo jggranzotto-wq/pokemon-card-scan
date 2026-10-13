@@ -47,7 +47,14 @@ async function bitmapFromBlob(file: Blob): Promise<ImageBitmap | HTMLImageElemen
   }
 }
 
-export async function compressImage(file: Blob, maxEdge = 1800, quality = 0.86): Promise<Blob> {
+export const IMAGE_MAX_EDGE = 1600;
+export const IMAGE_JPEG_QUALITY = 0.85;
+
+export async function compressImage(
+  file: Blob,
+  maxEdge = IMAGE_MAX_EDGE,
+  quality = IMAGE_JPEG_QUALITY,
+): Promise<Blob> {
   const source = await bitmapFromBlob(file);
   const srcW = "width" in source ? source.width : 0;
   const srcH = "height" in source ? source.height : 0;
