@@ -1,6 +1,8 @@
 import { chaseCard, CHASE_CARD_IDS } from "./broad-pool";
+import { hasDatabase } from "./db";
+import { hasCatalogDetails } from "./image-hash-cache";
 import { storeCatalogHash } from "./image-match";
-import { listCardsInSet, listReleasedSets } from "./pokemon-tcg";
+import { listCardsInSet, listReleasedSets, lookupCatalogCard } from "./pokemon-tcg";
 import type { PokemonCard } from "../types/card";
 
 /** Sets released on or after this many years ago are warmed into the hash cache. */
@@ -39,6 +41,7 @@ export async function warmImageHashes(
     chaseCards?: PokemonCard[];
     listSets?: () => Promise<ReleasedSet[]>;
     listCards?: (setId: string, page: number) => Promise<PokemonCard[]>;
+    resolveCard?: (card: PokemonCard) => Promise<PokemonCard>;
     hashCard?: (card: PokemonCard) => Promise<"hashed" | "skipped" | "failed">;
   } = {},
 ): Promise<WarmImageHashResult> {
@@ -46,6 +49,7 @@ export async function warmImageHashes(
   const since = broadPoolSince(deps.now ?? new Date(), deps.years ?? BROAD_POOL_YEARS);
   const listSets = deps.listSets ?? listReleasedSets;
   const listCards = deps.listCards ?? ((setId: string, page: number) => listCardsInSet(setId, page));
+  const resolveCard = deps.resolveCard ?? (deps.hashCard ? async (card: PokemonCard) => card : resolveForStorage);
   const hashCard = deps.hashCard ?? ((card: PokemonCard) => storeCatalogHash(card));
   const chaseCards = deps.chaseCards ?? CHASE_CARD_IDS.map((id) => chaseCard(id));
   const result: WarmImageHashResult = { hashed: 0, skipped: 0, failed: 0, sets: 0 };
@@ -57,7 +61,8 @@ export async function warmImageHashes(
     if (stop() || seen.has(card.id)) return;
     seen.add(card.id);
     try {
-      const status = await hashCard(card);
+      const resolved = await resolveCard(card);
+      const status = await hashCard(resolved);
       result[status] += 1;
     } catch (error) {
       result.failed += 1;
@@ -92,4 +97,27 @@ export async function warmImageHashes(
     }
   }
   return result;
+}
+
+async function resolveForStorage(card: PokemonCard): Promise<PokemonCard> {
+  if (hasCatalogDetails(card)) return card;
+  return (await lookupCatalogCard(card.id)) ?? card;
+}
+
+let warmStarted = false;
+
+/** One background batch. Safe to call on server boot; later runs continue where this one stopped. */
+export function startImageHashWarm(): void {
+  if (warmStarted || !hasDatabase()) return;
+  warmStarted = true;
+  void warmImageHashes()
+    .then((result) => {
+      console.info(
+        `[warm-image-hashes] startup hashed=${result.hashed} skipped=${result.skipped} failed=${result.failed} sets=${result.sets}`,
+      );
+    })
+    .catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : "warm failed";
+      console.error(`[warm-image-hashes] startup failed (${detail})`);
+    });
 }

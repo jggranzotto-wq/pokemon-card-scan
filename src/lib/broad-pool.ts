@@ -1,5 +1,5 @@
 import { signatureDistance } from "./art-hash";
-import { listImageHashes } from "./image-hash-cache";
+import { cardFromStored, listImageHashes } from "./image-hash-cache";
 import type { PokemonCard } from "../types/card";
 
 /**
@@ -63,7 +63,7 @@ export async function broadPoolCandidates(
     if (seen.has(row.cardId) || !usableSignature(row.dhash)) continue;
     const distance = signatureDistance(photoHash, row.dhash);
     if (distance == null) continue;
-    hits.push({ card: chaseCard(row.cardId, row.imageUrl), distance });
+    hits.push({ card: cardFromStored(row.cardId, row.imageUrl, row.details), distance });
   }
   hits.sort((a, b) => a.distance - b.distance);
   for (const hit of hits.slice(0, CACHED_BROAD_LIMIT)) {
@@ -79,7 +79,7 @@ export async function broadPoolCandidates(
       const distance = signatureDistance(photoHash, row.dhash);
       if (distance != null) {
         seen.add(id);
-        cards.push(chaseCard(id, row.imageUrl));
+        cards.push(cardFromStored(id, row.imageUrl, row.details));
         distances.set(id, distance);
         continue;
       }

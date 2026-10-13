@@ -89,8 +89,11 @@ CREATE TABLE IF NOT EXISTS catalog_image_hashes (
   card_id TEXT PRIMARY KEY,
   image_url TEXT NOT NULL,
   dhash TEXT NOT NULL,
+  details JSONB,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE catalog_image_hashes ADD COLUMN IF NOT EXISTS details JSONB;
 `;
 
 let pool: Pool | null = null;

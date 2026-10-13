@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { chaseCard } from "./broad-pool";
-import { setsReleasedSince, warmImageHashes } from "./warm-image-hashes";
+import { setsReleasedSince, startImageHashWarm, warmImageHashes } from "./warm-image-hashes";
 import type { PokemonCard } from "../types/card";
 
 describe("warmImageHashes", () => {
@@ -43,5 +43,34 @@ describe("warmImageHashes", () => {
     assert.equal(result.skipped, 1);
     assert.equal(result.failed, 0);
     assert.equal(result.sets, 1);
+  });
+
+  it("resolves a stub chase card before storing it", async () => {
+    const names: string[] = [];
+    await warmImageHashes({
+      now: new Date("2026-10-13T00:00:00Z"),
+      limit: 1,
+      chaseCards: [chaseCard("sv3-223")],
+      listSets: async () => [],
+      resolveCard: async (card) => ({
+        ...card,
+        name: "Charizard ex",
+        setName: "Obsidian Flames",
+        number: "223",
+        printedNumber: "223/197",
+      }),
+      hashCard: async (card) => {
+        names.push(card.name);
+        return "hashed";
+      },
+    });
+    assert.deepEqual(names, ["Charizard ex"]);
+  });
+
+  it("does not start a background warm without a database", () => {
+    const previous = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    startImageHashWarm();
+    if (previous) process.env.DATABASE_URL = previous;
   });
 });

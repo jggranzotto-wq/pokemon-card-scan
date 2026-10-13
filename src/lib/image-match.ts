@@ -1,6 +1,6 @@
 import { artSignature, signatureDistance } from "./art-hash";
 import { straightenCardPhoto } from "./card-photo";
-import { readImageHash, writeImageHash } from "./image-hash-cache";
+import { hasCatalogDetails, readImageHash, writeCardDetails, writeImageHash } from "./image-hash-cache";
 import { isCatalogImageUrl } from "./thumbnail";
 import type { PokemonCard } from "../types/card";
 
@@ -77,8 +77,12 @@ export async function storeCatalogHash(
   const url = catalogImageUrl(card);
   if (!url) return "failed";
   const existing = await cache.get(card.id, url);
-  if (usableSignature(existing)) return "skipped";
+  if (usableSignature(existing)) {
+    if (hasCatalogDetails(card)) await writeCardDetails(card);
+    return "skipped";
+  }
   const hash = await hashForCard(card, fetchImpl, cache);
+  if (hash && hasCatalogDetails(card)) await writeCardDetails(card);
   return hash ? "hashed" : "failed";
 }
 

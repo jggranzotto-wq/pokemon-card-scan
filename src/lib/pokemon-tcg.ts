@@ -668,6 +668,30 @@ export function rankCandidates(cards: PokemonCard[], extracted: ExtractedCard): 
   }
 }
 
+/** Card details for a catalog id, without waiting on the full set list. */
+export async function lookupCatalogCard(id: string): Promise<PokemonCard | null> {
+  const timeout = AbortSignal.timeout(8_000);
+  const pokemon = await fetchJson<{ data: ApiCard }>(`${POKEMONTCG}/cards/${encodeURIComponent(id)}`, {
+    headers: pokemonTcgHeaders(),
+    signal: timeout,
+  });
+  if (pokemon?.data?.name) return toCard(pokemon.data);
+
+  const searched = await searchPokemonTcg(`id:${escapeLucene(id)}`, 1, 1);
+  const match = searched.find((card) => card.id === id && card.name && card.name !== card.id);
+  if (match) return match;
+
+  for (const lang of ["en", "ja"] as const) {
+    const detail = await fetchJson<TcgdexCard>(`${TCGDEX}/${lang}/cards/${encodeURIComponent(id)}`, {
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (detail?.name) {
+      return tcgdexToCard(detail, detail.set, detail, lang === "ja" ? "Japanese" : undefined);
+    }
+  }
+  return null;
+}
+
 export async function getCardById(id: string): Promise<PokemonCard | null> {
   await listSetNames();
   const pokemon = await fetchJson<{ data: ApiCard }>(`${POKEMONTCG}/cards/${encodeURIComponent(id)}`, {

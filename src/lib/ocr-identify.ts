@@ -1,7 +1,8 @@
 import { broadPoolCandidates } from "./broad-pool";
+import { writeCardDetails } from "./image-hash-cache";
 import { catalogHashDistances, photoArtSignature } from "./image-match";
 import { decideOcrIdentification, needsBroadPool, OCR_UNCLEAR_MESSAGE, variantHashPriority } from "./ocr-match";
-import { getCardById, lookupOcrCandidates } from "./pokemon-tcg";
+import { lookupCatalogCard, lookupOcrCandidates } from "./pokemon-tcg";
 import type { ExtractedCard, IdentifyResponse, PokemonCard } from "../types/card";
 
 function bestDistance(distances: Map<string, number> | null): number | null {
@@ -38,15 +39,14 @@ async function hydrateStubs(
     top.map(async (id) => {
       const card = cards.find((row) => row.id === id);
       if (!card || card.name !== card.id) return;
-      const detail = await Promise.race([
-        hydrate(id),
-        new Promise<PokemonCard | null>((resolve) => setTimeout(() => resolve(null), 4_000)),
-      ]);
-      if (!detail) return;
-      replacements.set(id, {
+      const detail = await hydrate(id);
+      if (!detail || detail.name === id) return;
+      const next = {
         ...detail,
         images: detail.images?.small || detail.images?.large ? detail.images : card.images,
-      });
+      };
+      replacements.set(id, next);
+      await writeCardDetails(next);
     }),
   );
   if (!replacements.size) return cards;
@@ -96,7 +96,7 @@ export async function identifyOcrPhoto(input: {
       for (const [id, distance] of more) distances.set(id, distance);
     }
     pool = mergeCards(pool, unseen);
-    pool = await hydrateStubs(pool, distances, input.hydrate ?? getCardById);
+    pool = await hydrateStubs(pool, distances, input.hydrate ?? lookupCatalogCard);
     imageOverride = true;
     console.info(`[identify] broad pool compared ${pool.length} cards`);
   }
