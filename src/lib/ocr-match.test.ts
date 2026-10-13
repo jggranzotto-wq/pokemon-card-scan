@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  catalogNameToken,
   collectorMatches,
   decideOcrIdentification,
+  fuzzyNameQuery,
   namesAreFuzzyMatch,
   OCR_UNCLEAR_MESSAGE,
   selectOcrPool,
@@ -38,6 +40,12 @@ const otherCharizard = card({
 const pikachu = card({ id: "base1-58", name: "Pikachu", number: "58", printedNumber: "58/102" });
 
 describe("ocr narrowing", () => {
+  it("searches every printing of a fuzzy name, including a one-character miss", () => {
+    assert.equal(catalogNameToken("Charizard"), "charizard");
+    assert.equal(catalogNameToken("Charizad"), "charizard");
+    assert.equal(fuzzyNameQuery("Charizard"), "name:charizard*");
+  });
+
   it("fuzzy-matches a name and a collector number like 223/197", () => {
     assert.equal(namesAreFuzzyMatch("Charizard", "Charzard"), true);
     assert.equal(namesAreFuzzyMatch("Pikachu", "Charizard"), false);
@@ -117,7 +125,38 @@ describe("decideOcrIdentification", () => {
     assert.deepEqual(close.candidates.map((row) => row.id), ["base1-4", "base4-4"]);
   });
 
-  it("hides a weak image guess that does not match both the name and the number", () => {
+  it("keeps name printings when the collector number matches nothing, and shows them unless the image match is clear", () => {
+    const ex = card({ id: "sv3-223", name: "Charizard ex", number: "223", printedNumber: "223/197" });
+    const pool = selectOcrPool([ex, pikachu, charizard], { name: "Charizard", collectorNumber: "7" });
+    assert.deepEqual(
+      pool.map((row) => row.id),
+      ["sv3-223", "base1-4"],
+    );
+
+    const ranked = decideOcrIdentification({
+      extracted: { name: "Charizard", collectorNumber: "7" },
+      cards: [charizard, ex],
+      distances: new Map([
+        ["sv3-223", 18],
+        ["base1-4", 30],
+      ]),
+    });
+    assert.equal(ranked.candidates[0].id, "sv3-223");
+    assert.equal(ranked.autoSelectedId, "sv3-223");
+
+    const close = decideOcrIdentification({
+      extracted: { name: "Charizard", collectorNumber: "7" },
+      cards: [charizard, ex],
+      distances: new Map([
+        ["sv3-223", 18],
+        ["base1-4", 24],
+      ]),
+    });
+    assert.equal(close.autoSelectedId, undefined);
+    assert.deepEqual(close.candidates.map((row) => row.id), ["sv3-223", "base1-4"]);
+  });
+
+  it("shows a weak name match as a thumbnail instead of dropping it", () => {
     const decision = decideOcrIdentification({
       extracted: { name: "Charizard" },
       cards: [charizard, pikachu],
@@ -126,7 +165,8 @@ describe("decideOcrIdentification", () => {
         ["base1-58", 42],
       ]),
     });
-    assert.deepEqual(decision.candidates, []);
-    assert.equal(decision.message, OCR_UNCLEAR_MESSAGE);
+    assert.deepEqual(decision.candidates.map((row) => row.id), ["base1-4"]);
+    assert.equal(decision.autoSelectedId, undefined);
+    assert.equal(decision.message, undefined);
   });
 });

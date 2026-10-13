@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import sharp from "sharp";
-import { differenceHash } from "./dhash";
+import { artSignature, signatureDistance } from "./art-hash";
 import { catalogHashDistances, type ImageHashCache } from "./image-match";
 import type { PokemonCard } from "../types/card";
 
@@ -64,6 +64,6 @@ describe("catalogHashDistances", () => {
     const second = await catalogHashDistances(match, [card("base1-4")], { fetchImpl, cache });
     assert.equal(fetched.length, 0);
     assert.equal(second.get("base1-4"), first.get("base1-4"));
-    assert.equal(stored.get("base1-4"), await differenceHash(match));
+    assert.equal(signatureDistance(stored.get("base1-4") ?? "", await artSignature(match)), 0);
   });
 });
