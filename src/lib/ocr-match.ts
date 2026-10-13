@@ -3,6 +3,15 @@ import type { ExtractedCard, PokemonCard } from "../types/card";
 
 export const OCR_UNCLEAR_MESSAGE = "Couldn't read the card clearly. Search by name.";
 
+/** Shown with thumbnails whenever a photo was not auto-selected. */
+export const OCR_GUIDANCE_MESSAGE = "Tap the closest card, or search by name.";
+
+/** Printings that must be searched even when the catalog lists the plain name first. */
+export const NAME_SUFFIXES = ["ex", "V", "VMAX", "VSTAR", "GX"] as const;
+
+/** Below this, the OCR name is too uncertain to trust over the art hash. */
+export const LOW_OCR_CONFIDENCE = 0.75;
+
 /** How many printings of a fuzzy name are hashed. */
 export const OCR_CANDIDATE_CAP = 250;
 
@@ -11,8 +20,8 @@ export const OCR_THUMBNAIL_LIMIT = 8;
 
 /**
  * Combined art-hash distance (0–64) at or below this can auto-select.
- * Tuned on a 4000px perspective/blur photo of sv3-223, which lands near 18
- * while the next Charizard printing is near 29.
+ * A 4000px phone photo of the sv3-223 large image (perspective, glare, and blur)
+ * lands near 21, while the next Charizard printing is near 29.
  */
 export const STRONG_HASH_DISTANCE = 22;
 
@@ -69,6 +78,32 @@ export function fuzzyNameQuery(name: string): string {
   return `name:${catalogNameToken(name)}*`;
 }
 
+/** Exact catalog queries for the species plus ex, V, VMAX, VSTAR, and GX. */
+export function variantNameQueries(name: string): string[] {
+  const token = catalogNameToken(name);
+  if (token.length < 4) return [];
+  const species = token.charAt(0).toUpperCase() + token.slice(1);
+  return NAME_SUFFIXES.map((suffix) => `name:"${species} ${suffix}"`);
+}
+
+/** Lower sorts first so variant printings are hashed before a long list of plain names. */
+export function variantHashPriority(name: string): number {
+  const normalized = normalizeName(name);
+  const rank = ["ex", "vmax", "vstar", "v", "gx"].findIndex((suffix) => normalized.endsWith(` ${suffix}`));
+  return rank === -1 ? 5 : rank;
+}
+
+export function imageScoreFromDistance(distance: number): number {
+  return Math.max(0, Math.min(1, 1 - distance / 64));
+}
+
+/** Low name confidence, or no art hash clearly inside the auto-select range. */
+export function needsBroadPool(extracted: ExtractedCard, bestDistance: number | null): boolean {
+  const lowConfidence = typeof extracted.confidence === "number" && extracted.confidence < LOW_OCR_CONFIDENCE;
+  const weakImage = bestDistance == null || bestDistance > STRONG_HASH_DISTANCE;
+  return lowConfidence || weakImage;
+}
+
 export function namesAreFuzzyMatch(cardName: string, readName: string): boolean {
   const card = normalizeName(cardName);
   const read = normalizeName(readName);
@@ -120,31 +155,43 @@ export function matchScore(card: PokemonCard, extracted: ExtractedCard, distance
   return ocr * 0.25 + image * 0.75;
 }
 
+function withImageScore(card: PokemonCard, distance: number | undefined): PokemonCard {
+  if (distance == null) return card;
+  return { ...card, imageScore: imageScoreFromDistance(distance) };
+}
+
 export function decideOcrIdentification(input: {
   extracted: ExtractedCard;
   cards: PokemonCard[];
   /** Present when the uploaded photo was hashed against catalog art. */
   distances?: Map<string, number> | null;
+  /** Rank by art hash even when the card name disagrees with OCR. */
+  imageOverride?: boolean;
 }): { candidates: PokemonCard[]; autoSelectedId?: string; message?: string } {
   const { extracted } = input;
   const photo = input.distances != null;
-  if (!extracted.name && !extracted.collectorNumber) {
+  if (!photo && !extracted.name && !extracted.collectorNumber) {
     return { candidates: [], message: OCR_UNCLEAR_MESSAGE };
   }
 
   if (!photo) {
     const both = input.cards.filter((card) => bothMatch(card, extracted));
     if (!both.length) return { candidates: [], message: OCR_UNCLEAR_MESSAGE };
-    return { candidates: both.slice(0, 8) };
+    return { candidates: both.slice(0, 8), message: OCR_GUIDANCE_MESSAGE };
   }
 
-  const pool = selectOcrPool(input.cards, extracted, OCR_CANDIDATE_CAP);
+  const distances = input.distances ?? new Map<string, number>();
+  const pool = input.imageOverride
+    ? input.cards.filter((card) => distances.has(card.id))
+    : selectOcrPool(input.cards, extracted, OCR_CANDIDATE_CAP);
   if (!pool.length) return { candidates: [], message: OCR_UNCLEAR_MESSAGE };
 
-  const distances = input.distances ?? new Map<string, number>();
-  const ranked = [...pool].sort(
-    (a, b) => matchScore(b, extracted, distances.get(b.id) ?? null) - matchScore(a, extracted, distances.get(a.id) ?? null),
-  );
+  const ranked = [...pool].sort((a, b) => {
+    const left = distances.get(a.id) ?? 64;
+    const right = distances.get(b.id) ?? 64;
+    if (left !== right) return left - right;
+    return matchScore(b, extracted, distances.get(b.id) ?? null) - matchScore(a, extracted, distances.get(a.id) ?? null);
+  });
   const top = ranked[0];
   const second = ranked[1];
   const topDistance = distances.get(top.id);
@@ -154,7 +201,8 @@ export function decideOcrIdentification(input: {
     topDistance <= STRONG_HASH_DISTANCE &&
     (secondDistance == null || secondDistance >= topDistance + STRONG_HASH_MARGIN);
   return {
-    candidates: ranked.slice(0, OCR_THUMBNAIL_LIMIT),
+    candidates: ranked.slice(0, OCR_THUMBNAIL_LIMIT).map((card) => withImageScore(card, distances.get(card.id))),
     autoSelectedId: strong ? top.id : undefined,
+    message: strong ? undefined : OCR_GUIDANCE_MESSAGE,
   };
 }

@@ -5,9 +5,14 @@ import {
   collectorMatches,
   decideOcrIdentification,
   fuzzyNameQuery,
+  imageScoreFromDistance,
   namesAreFuzzyMatch,
+  needsBroadPool,
+  OCR_GUIDANCE_MESSAGE,
   OCR_UNCLEAR_MESSAGE,
   selectOcrPool,
+  variantHashPriority,
+  variantNameQueries,
 } from "./ocr-match";
 import type { PokemonCard } from "../types/card";
 
@@ -44,6 +49,15 @@ describe("ocr narrowing", () => {
     assert.equal(catalogNameToken("Charizard"), "charizard");
     assert.equal(catalogNameToken("Charizad"), "charizard");
     assert.equal(fuzzyNameQuery("Charizard"), "name:charizard*");
+    assert.deepEqual(variantNameQueries("Charizard"), [
+      'name:"Charizard ex"',
+      'name:"Charizard V"',
+      'name:"Charizard VMAX"',
+      'name:"Charizard VSTAR"',
+      'name:"Charizard GX"',
+    ]);
+    assert.ok(variantHashPriority("Charizard ex") < variantHashPriority("Charizard"));
+    assert.ok(variantHashPriority("Charizard VMAX") < variantHashPriority("Charizard V"));
   });
 
   it("fuzzy-matches a name and a collector number like 223/197", () => {
@@ -93,6 +107,7 @@ describe("decideOcrIdentification", () => {
     });
     assert.deepEqual(both.candidates.map((row) => row.id), ["base1-4"]);
     assert.equal(both.autoSelectedId, undefined);
+    assert.equal(both.message, OCR_GUIDANCE_MESSAGE);
 
     const nameOnly = decideOcrIdentification({
       extracted: { name: "Charizard" },
@@ -122,7 +137,9 @@ describe("decideOcrIdentification", () => {
       ]),
     });
     assert.equal(close.autoSelectedId, undefined);
+    assert.equal(close.message, OCR_GUIDANCE_MESSAGE);
     assert.deepEqual(close.candidates.map((row) => row.id), ["base1-4", "base4-4"]);
+    assert.ok((close.candidates[0].imageScore ?? 0) > (close.candidates[1].imageScore ?? 0));
   });
 
   it("keeps name printings when the collector number matches nothing, and shows them unless the image match is clear", () => {
@@ -153,7 +170,20 @@ describe("decideOcrIdentification", () => {
       ]),
     });
     assert.equal(close.autoSelectedId, undefined);
+    assert.equal(close.message, OCR_GUIDANCE_MESSAGE);
     assert.deepEqual(close.candidates.map((row) => row.id), ["sv3-223", "base1-4"]);
+
+    const buried = decideOcrIdentification({
+      extracted: { name: "Charizard", collectorNumber: "7" },
+      cards: [charizard, ex],
+      distances: new Map([
+        ["sv3-223", 20],
+        ["base1-4", 21],
+      ]),
+    });
+    assert.equal(buried.candidates[0].id, "sv3-223");
+    assert.equal(buried.autoSelectedId, undefined);
+    assert.ok((buried.candidates[0].imageScore ?? 0) > (buried.candidates[1].imageScore ?? 0));
   });
 
   it("shows a weak name match as a thumbnail instead of dropping it", () => {
@@ -167,6 +197,26 @@ describe("decideOcrIdentification", () => {
     });
     assert.deepEqual(decision.candidates.map((row) => row.id), ["base1-4"]);
     assert.equal(decision.autoSelectedId, undefined);
-    assert.equal(decision.message, undefined);
+    assert.equal(decision.message, OCR_GUIDANCE_MESSAGE);
+    assert.equal(decision.candidates[0].imageScore, imageScoreFromDistance(40));
+  });
+
+  it("lets a broad image score outrank a confident wrong name", () => {
+    const infernape = card({ id: "sv4-1", name: "Infernape", number: "1" });
+    const ex = card({ id: "sv3-223", name: "Charizard ex", number: "223", printedNumber: "223/197" });
+    const decision = decideOcrIdentification({
+      extracted: { name: "Infernape", confidence: 0.4 },
+      cards: [infernape, ex],
+      distances: new Map([
+        ["sv4-1", 40],
+        ["sv3-223", 18],
+      ]),
+      imageOverride: true,
+    });
+    assert.equal(decision.candidates[0].id, "sv3-223");
+    assert.equal(decision.autoSelectedId, "sv3-223");
+    assert.equal(needsBroadPool({ name: "Infernape", confidence: 0.4 }, 10), true);
+    assert.equal(needsBroadPool({ name: "Charizard", confidence: 0.9 }, 18), false);
+    assert.equal(needsBroadPool({ name: "Charizard", confidence: 0.9 }, 30), true);
   });
 });

@@ -22,9 +22,15 @@ describe("lookupOcrCandidates", () => {
     const base = card({ id: "base1-4", name: "Charizard", number: "4", printedNumber: "4/102", setId: "base1" });
     const result = await lookupOcrCandidates({ name: "Charizard", collectorNumber: "7" }, async (query, pageSize) => {
       queries.push(`${query}|${pageSize}`);
-      if (query === "name:charizard*") return [ex, base];
+      if (query === 'name:"Charizard ex"') return [ex];
+      if (query === "name:charizard*") return [base];
       return [];
     });
+    assert.ok(queries.some((query) => query.startsWith('name:"Charizard ex"|')));
+    assert.ok(queries.some((query) => query.startsWith('name:"Charizard V"|')));
+    assert.ok(queries.some((query) => query.startsWith('name:"Charizard VMAX"|')));
+    assert.ok(queries.some((query) => query.startsWith('name:"Charizard VSTAR"|')));
+    assert.ok(queries.some((query) => query.startsWith('name:"Charizard GX"|')));
     assert.ok(queries.some((query) => query.startsWith("name:charizard*|")));
     assert.deepEqual(
       result.map((row) => row.id),

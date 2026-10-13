@@ -62,17 +62,36 @@ async function hashForCard(
   }
 }
 
+export async function photoArtSignature(photo: Buffer): Promise<string> {
+  const prepared = await straightenCardPhoto(photo);
+  return artSignature(prepared);
+}
+
+/** Download and store one catalog signature. Skips a hash that is already cached. */
+export async function storeCatalogHash(
+  card: PokemonCard,
+  deps: { fetchImpl?: typeof fetch; cache?: ImageHashCache } = {},
+): Promise<"hashed" | "skipped" | "failed"> {
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const cache = deps.cache ?? postgresCache;
+  const url = catalogImageUrl(card);
+  if (!url) return "failed";
+  const existing = await cache.get(card.id, url);
+  if (usableSignature(existing)) return "skipped";
+  const hash = await hashForCard(card, fetchImpl, cache);
+  return hash ? "hashed" : "failed";
+}
+
 /** Combined art-hash distance from the straightened photo to each catalog image. */
 export async function catalogHashDistances(
   photo: Buffer,
   cards: PokemonCard[],
-  deps: { fetchImpl?: typeof fetch; cache?: ImageHashCache; deadlineMs?: number } = {},
+  deps: { fetchImpl?: typeof fetch; cache?: ImageHashCache; deadlineMs?: number; photoHash?: string } = {},
 ): Promise<Map<string, number>> {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const cache = deps.cache ?? postgresCache;
   const deadline = Date.now() + (deps.deadlineMs ?? 20_000);
-  const prepared = await straightenCardPhoto(photo);
-  const photoHash = await artSignature(prepared);
+  const photoHash = deps.photoHash ?? (await photoArtSignature(photo));
   const distances = new Map<string, number>();
   const queue = cards.filter((card) => catalogImageUrl(card));
 
